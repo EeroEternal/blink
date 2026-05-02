@@ -16,7 +16,11 @@ pub fn build(b: *std.Build) void {
         .root_module = core_mod,
     });
     lib.linkLibC();
-    lib.linkSystemLibrary("krun");
+    // Only link krun if we are specifically targeting krun backend or it's available
+    // For now, we allow building without it for simulation purposes
+    if (b.option(bool, "enable-krun", "Enable libkrun support") orelse false) {
+        lib.linkSystemLibrary("krun");
+    }
     b.installArtifact(lib);
 
     const exe_mod = b.createModule(.{
@@ -30,7 +34,9 @@ pub fn build(b: *std.Build) void {
         .root_module = exe_mod,
     });
     exe.linkLibC();
-    exe.linkSystemLibrary("krun");
+    if (b.option(bool, "enable-krun", "Enable libkrun support") orelse false) {
+        exe.linkSystemLibrary("krun");
+    }
     b.installArtifact(exe);
 
     // blink-init must be a statically compiled Linux binary (it runs inside the sandbox)
