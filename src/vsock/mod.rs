@@ -9,12 +9,15 @@ pub struct VsockListener {
 
 impl VsockListener {
     pub fn bind(port: u32) -> Result<Self, Box<dyn std::error::Error>> {
-        let fd = socket::socket(
-            nix::sys::socket::AddressFamily::Vsock,
-            SockType::Stream,
-            None,
-            SockFlag::SOCK_NONBLOCK,
-        )?;
+    pub fn bind(port: u32) -> Result<Self, Box<dyn std::error::Error>> {
+        let fd = unsafe {
+            libc::socket(
+                libc::AF_VSOCK,
+                libc::SOCK_STREAM | libc::SOCK_NONBLOCK,
+                0,
+            )
+        };
+        if fd < 0 { return Err("socket failed".into()); }
         
         let owned_fd = unsafe { OwnedFd::from_raw_fd(fd) };
 
