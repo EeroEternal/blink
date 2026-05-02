@@ -2,6 +2,8 @@ use crate::protocol::VsockPacketHeader;
 
 pub mod qemu;
 pub use qemu::QemuDriver;
+pub mod container;
+pub use container::ContainerDriver;
 
 pub trait Hypervisor {
     fn setup_filesystem(&self, root_path: &str, mappings: &[String]) -> Result<(), String>;
