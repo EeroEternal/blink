@@ -12,7 +12,7 @@ impl VsockListener {
         let fd = socket::socket(
             nix::sys::socket::AddressFamily::Vsock,
             SockType::Stream,
-            SockProtocol::from(0),
+            None,
             SockFlag::SOCK_NONBLOCK,
         )?;
         
