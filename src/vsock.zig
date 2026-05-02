@@ -54,9 +54,11 @@ pub const VsockDispatcher = struct {
 
     /// Event loop multiplexing Host and Agents
     pub fn serve(self: *VsockDispatcher) !void {
-        while (true) {
+        var should_exit = false;
+
+        while (!should_exit) {
             const num_events = posix.poll(self.poll_fds.items, -1) catch |err| {
-                std.log.err("poll failed: {}", .{err});
+                std.debug.print("poll failed: {}\n", .{err});
                 continue;
             };
             if (num_events == 0) continue;
@@ -74,8 +76,8 @@ pub const VsockDispatcher = struct {
                         try self.acceptConnection();
                     }
                 } else {
-                    const keep_alive = self.handleClient(pfd.fd, pfd.revents) catch |err| blk: {
-                        std.log.err("Client handler error: {}", .{err});
+                    const keep_alive = self.handleClient(pfd.fd, pfd.revents, &should_exit) catch |err| blk: {
+                        std.debug.print("Client handler error: {}\n", .{err});
                         break :blk false;
                     };
 
@@ -106,7 +108,7 @@ pub const VsockDispatcher = struct {
     }
 
     /// Returns true if the connection should be kept alive, false if it should be closed
-    fn handleClient(self: *VsockDispatcher, fd: posix.fd_t, revents: i16) !bool {
+    fn handleClient(self: *VsockDispatcher, fd: posix.fd_t, revents: i16, should_exit: *bool) !bool {
         if ((revents & posix.POLL.HUP) != 0 or (revents & posix.POLL.ERR) != 0) {
             return false;
         }
@@ -128,14 +130,14 @@ pub const VsockDispatcher = struct {
             const expected_len = @sizeOf(protocol.VsockPacketHeader) + header.payload_len;
             if (len >= expected_len) {
                 const payload = msg[@sizeOf(protocol.VsockPacketHeader)..expected_len];
-                try self.handleProtocolMessage(fd, header, payload);
+                try self.handleProtocolMessage(fd, header, payload, should_exit);
             } else {
-                std.log.warn("V-Hub: Partial packet received. Sticky/split packet buffering not yet fully implemented.", .{});
+                // If we get here, log to stderr so we don't pollute stdout where JSON goes
+                std.debug.print("V-Hub: Partial packet received. Sticky/split packet buffering not yet fully implemented.\n", .{});
             }
         } else |_| {
             // Fallback for raw text testing
             if (std.mem.startsWith(u8, msg, "Hello, Host!")) {
-                std.log.info("V-Hub: Answering 'Hello, Blink!' (Raw)", .{});
                 _ = try posix.write(fd, "Hello, Blink!");
             }
         }
@@ -143,12 +145,11 @@ pub const VsockDispatcher = struct {
         return true;
     }
 
-    fn handleProtocolMessage(self: *VsockDispatcher, fd: posix.fd_t, header: protocol.VsockPacketHeader, payload: []const u8) !void {
+    fn handleProtocolMessage(self: *VsockDispatcher, fd: posix.fd_t, header: protocol.VsockPacketHeader, payload: []const u8, should_exit: *bool) !void {
         const msg_type: protocol.MessageType = @enumFromInt(header.msg_type);
         
         switch (msg_type) {
             .Handshake => {
-                std.log.info("V-Hub Protocol: Received Handshake from Agent", .{});
                 const response = try protocol.VsockProtocol.encodePacketAlloc(
                     self.allocator, .Handshake, header.request_id, "{\"status\":\"ok\"}"
                 );
@@ -156,18 +157,23 @@ pub const VsockDispatcher = struct {
                 _ = try posix.write(fd, response);
             },
             .RpcRequest => {
-                std.log.info("V-Hub Protocol: Received RpcRequest (ID: {}): {s}", .{header.request_id, payload});
-                // In a real implementation, parse JSON here and execute the tool.
-                // For now, echo back a response.
-                const response_payload = "{\"result\":\"hello from host RPC\"}";
+                // Print purely the JSON payload to stdout so the calling Python SDK can parse it
+                const stdout = std.io.getStdOut().writer();
+                try stdout.print("{s}\n", .{payload});
+
+                // Acknowledge the agent so it can shut down cleanly
+                const response_payload = "{\"result\":\"ack\"}";
                 const response = try protocol.VsockProtocol.encodePacketAlloc(
                     self.allocator, .RpcResponse, header.request_id, response_payload
                 );
                 defer self.allocator.free(response);
                 _ = try posix.write(fd, response);
+
+                // Signal the event loop to exit since the agent's task is done
+                should_exit.* = true;
             },
             else => {
-                std.log.warn("V-Hub Protocol: Unhandled message type: {}", .{header.msg_type});
+                std.debug.print("V-Hub Protocol: Unhandled message type: {}\n", .{header.msg_type});
             }
         }
     }
