@@ -1,5 +1,6 @@
 const std = @import("std");
 const posix = std.posix;
+const protocol = @import("protocol.zig");
 
 pub const AF_VSOCK: u16 = 40; // Linux specific Address Family for Vsock
 
@@ -106,7 +107,6 @@ pub const VsockDispatcher = struct {
 
     /// Returns true if the connection should be kept alive, false if it should be closed
     fn handleClient(self: *VsockDispatcher, fd: posix.fd_t, revents: i16) !bool {
-        _ = self;
         if ((revents & posix.POLL.HUP) != 0 or (revents & posix.POLL.ERR) != 0) {
             return false;
         }
@@ -122,17 +122,53 @@ pub const VsockDispatcher = struct {
         }
 
         const msg = buf[0..len];
-        std.log.info("V-Hub intercepted {} bytes from Agent: {s}", .{len, msg});
         
-        // Protocol Implementation: Handshake
-        if (std.mem.startsWith(u8, msg, "Hello, Host!")) {
-            std.log.info("V-Hub: Answering 'Hello, Blink!'", .{});
-            _ = try posix.write(fd, "Hello, Blink!");
-        } else {
-            // Proxy routing implementation goes here
-            _ = try posix.write(fd, msg);
+        // Attempt to parse as new structured protocol
+        if (protocol.VsockProtocol.decodeHeader(msg)) |header| {
+            const expected_len = @sizeOf(protocol.VsockPacketHeader) + header.payload_len;
+            if (len >= expected_len) {
+                const payload = msg[@sizeOf(protocol.VsockPacketHeader)..expected_len];
+                try self.handleProtocolMessage(fd, header, payload);
+            } else {
+                std.log.warn("V-Hub: Partial packet received. Sticky/split packet buffering not yet fully implemented.", .{});
+            }
+        } else |_| {
+            // Fallback for raw text testing
+            if (std.mem.startsWith(u8, msg, "Hello, Host!")) {
+                std.log.info("V-Hub: Answering 'Hello, Blink!' (Raw)", .{});
+                _ = try posix.write(fd, "Hello, Blink!");
+            }
         }
 
         return true;
+    }
+
+    fn handleProtocolMessage(self: *VsockDispatcher, fd: posix.fd_t, header: protocol.VsockPacketHeader, payload: []const u8) !void {
+        const msg_type: protocol.MessageType = @enumFromInt(header.msg_type);
+        
+        switch (msg_type) {
+            .Handshake => {
+                std.log.info("V-Hub Protocol: Received Handshake from Agent", .{});
+                const response = try protocol.VsockProtocol.encodePacketAlloc(
+                    self.allocator, .Handshake, header.request_id, "{\"status\":\"ok\"}"
+                );
+                defer self.allocator.free(response);
+                _ = try posix.write(fd, response);
+            },
+            .RpcRequest => {
+                std.log.info("V-Hub Protocol: Received RpcRequest (ID: {}): {s}", .{header.request_id, payload});
+                // In a real implementation, parse JSON here and execute the tool.
+                // For now, echo back a response.
+                const response_payload = "{\"result\":\"hello from host RPC\"}";
+                const response = try protocol.VsockProtocol.encodePacketAlloc(
+                    self.allocator, .RpcResponse, header.request_id, response_payload
+                );
+                defer self.allocator.free(response);
+                _ = try posix.write(fd, response);
+            },
+            else => {
+                std.log.warn("V-Hub Protocol: Unhandled message type: {}", .{header.msg_type});
+            }
+        }
     }
 };
