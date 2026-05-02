@@ -30,8 +30,8 @@ pub fn main() !void {
         // In a real environment with libkrun installed, this boots the VM
         std.debug.print("Blink Host: Booting VM and triggering script: {s}\n", .{script_path});
         
-        // We instantiate the blink core here
-        const instance = try blink.BlinkInstance.create(allocator, 3); // CID 3
+        // We instantiate the blink core here with .qemu backend for simulation
+        const instance = try blink.BlinkInstance.create(allocator, 3, .qemu); 
         defer instance.destroy();
         
         // Trigger is currently mocked to show the PathTranslator logic

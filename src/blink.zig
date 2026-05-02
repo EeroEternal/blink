@@ -2,6 +2,10 @@ const std = @import("std");
 const krun = @import("libkrun.zig");
 pub const path_translator = @import("path_translator.zig");
 const PathTranslator = path_translator.PathTranslator;
+const hypervisor = @import("hypervisor.zig");
+const BlinkHypervisor = hypervisor.BlinkHypervisor;
+const KrunBackend = @import("backends/krun_backend.zig").KrunBackend;
+const QemuBackend = @import("backends/qemu_backend.zig").QemuBackend;
 
 pub const BlinkState = enum {
     PreHeat,
@@ -13,68 +17,63 @@ pub const BlinkState = enum {
 /// 核心状态控制块
 pub const BlinkInstance = struct {
     allocator: std.mem.Allocator,
-    ctx_id: u32,
+    backend: BlinkHypervisor,
+    backend_data: *anyopaque,
     status: BlinkState,
     cid: u32,
 
-    pub fn create(allocator: std.mem.Allocator, cid: u32) !*BlinkInstance {
-        const ctx_id = try krun.createCtx();
-        errdefer krun.freeCtx(ctx_id);
-
+    pub fn create(allocator: std.mem.Allocator, cid: u32, htype: hypervisor.HypervisorType) !*BlinkInstance {
         const instance = try allocator.create(BlinkInstance);
-        instance.* = .{
-            .allocator = allocator,
-            .ctx_id = ctx_id,
-            .status = .PreHeat,
-            .cid = cid,
-        };
+        
+        switch (htype) {
+            .libkrun => {
+                const ctx_id = try krun.createCtx();
+                const backend_data = try allocator.create(KrunBackend);
+                backend_data.* = .{ .ctx_id = ctx_id };
+                instance.* = .{
+                    .allocator = allocator,
+                    .backend = .{ .ptr = backend_data, .vtable = &KrunBackend.vtable },
+                    .backend_data = backend_data,
+                    .status = .PreHeat,
+                    .cid = cid,
+                };
+            },
+            .qemu => {
+                const backend_data = try allocator.create(QemuBackend);
+                instance.* = .{
+                    .allocator = allocator,
+                    .backend = .{ .ptr = backend_data, .vtable = &QemuBackend.vtable },
+                    .backend_data = backend_data,
+                    .status = .PreHeat,
+                    .cid = cid,
+                };
+            },
+            else => unreachable,
+        }
         return instance;
     }
 
     pub fn destroy(self: *BlinkInstance) void {
-        if (self.status != .Vanished) {
-            krun.freeCtx(self.ctx_id);
-            self.status = .Vanished;
-        }
+        self.backend.destroy();
+        self.allocator.destroy(@as(*anyopaque, @ptrCast(self.backend_data)));
         self.allocator.destroy(self);
     }
 
+
     /// 设置文件系统映射 (Virtio-fs): Environment Ambient Pass-through
     pub fn setupFileSystem(self: *BlinkInstance, root_path: [:0]const u8, mappings: []const [:0]const u8) !void {
-        // Ephemeral Root mapping (Read-only rootfs)
-        try krun.setRoot(self.ctx_id, root_path);
-
-        if (mappings.len > 0) {
-            // libkrun expects a null-terminated array of pointers
-            var c_vols = try self.allocator.alloc(?[*:0]const u8, mappings.len + 1);
-            defer self.allocator.free(c_vols);
-            
-            for (mappings, 0..) |vol, i| {
-                c_vols[i] = vol.ptr;
-            }
-            c_vols[mappings.len] = null;
-            
-            // "host_path:guest_path:options" mapped via virtio-fs DAX
-            try krun.setMappedVolumes(self.ctx_id, c_vols);
-        }
+        try self.backend.setupFileSystem(root_path, mappings);
     }
 
     /// 注入脚本内容到内存映射区 (Hot-zone preparation)
     pub fn injectScript(self: *BlinkInstance, script_path: [:0]const u8, argv: []const ?[*:0]const u8, envp: []const ?[*:0]const u8) !void {
-        // Agent's only write space is the hot-zone (/tmp)
-        try krun.setWorkdir(self.ctx_id, "/tmp");
-        
-        // Execute the targeted runtime mapping
-        try krun.setExec(self.ctx_id, script_path, argv, envp);
+        try self.backend.injectScript(script_path, argv, envp);
     }
 
     /// 同步启动 vCPU，由内部线程池调用
     pub fn startVcpu(self: *BlinkInstance) !void {
         self.status = .Blinking;
-        // Blocks until guest shuts down, executing the injected python/ts payload
-        try krun.startEnter(self.ctx_id);
-        
-        // Retain memory state, but vCPU stops
+        try self.backend.startVcpu();
         self.status = .Halt;
     }
 
