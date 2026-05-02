@@ -115,7 +115,7 @@ class Box:
     Blink SDK - The 'Box' paradigm.
     Abstracts away VM instantiation, environment pass-through, and Vsock networking.
     """
-    def __init__(self, image: str = "python-3.11", cli_path: str = "./zig-out/bin/blink-cli"):
+    def __init__(self, image: str = "python-3.11", cli_path: str = "./target/debug/blink-cli"):
         self.image = image
         self.cli_path = cli_path
         self._temp_files = []
