@@ -18,4 +18,4 @@ class Blink:
 
 if __name__ == "__main__":
     vm = Blink(env="py311")
-    vm.run("src/guest_agent.py")
+    vm.run("examples/python/guest_agent.py")

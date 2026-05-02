@@ -32,4 +32,4 @@ Agent implementations must adhere to the 20-byte strict C ABI protocol:
 
 ## 3. Creating an Agent (Python Example)
 
-Use the built-in standard `socket` and `struct` libraries. See `src/guest_agent.py` for a fully functional RPC implementation.
+Use the built-in standard `socket` and `struct` libraries. See `examples/python/guest_agent.py` for a fully functional RPC implementation.

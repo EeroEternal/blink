@@ -23,7 +23,7 @@ Blink is a stateless, micro-runtime designed for AI Agents. It provides an execu
 - `src/path_translator.zig`: Automatically discovers the host Python environment (`sys.prefix`) and dynamically constructs `virtio-fs` mapping strings.
 - `src/vsock.zig` & `src/protocol.zig`: The V-Hub message gateway and 20-byte strict RPC packet parser.
 - `src/init.zig`: The minimal Linux-musl static binary acting as PID 1 inside the KVM boundary.
-- `src/guest_agent.py` & `src/blink_sdk.py`: Example guest payload and draft Python Host SDK.
+- `examples/python/`: Contains `guest_agent.py` and `blink_sdk.py` serving as reference implementations for the guest payload and Python Host SDK.
 - `tests/`: Contains test scripts for `path_translator`, `vsock`, and `array_list` validation.
 - `docs/`: Dedicated directory for deep technical specifications and architecture diagrams.
 
