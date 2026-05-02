@@ -32,4 +32,23 @@ pub fn build(b: *std.Build) void {
     exe.linkLibC();
     exe.linkSystemLibrary("krun");
     b.installArtifact(exe);
+
+    // blink-init must be a statically compiled Linux binary (it runs inside the sandbox)
+    const init_target = b.resolveTargetQuery(.{
+        .cpu_arch = target.result.cpu.arch,
+        .os_tag = .linux,
+        .abi = .musl,
+    });
+
+    const init_mod = b.createModule(.{
+        .root_source_file = b.path("src/init.zig"),
+        .target = init_target,
+        .optimize = optimize,
+    });
+
+    const init_exe = b.addExecutable(.{
+        .name = "blink-init",
+        .root_module = init_mod,
+    });
+    b.installArtifact(init_exe);
 }

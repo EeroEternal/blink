@@ -31,8 +31,8 @@ pub const VsockDispatcher = struct {
         try posix.bind(listen_fd, @ptrCast(&addr), @sizeOf(sockaddr_vm));
         try posix.listen(listen_fd, 128);
 
-        var poll_fds = std.ArrayList(posix.pollfd).init(allocator);
-        try poll_fds.append(.{
+        var poll_fds = std.ArrayList(posix.pollfd).empty;
+        try poll_fds.append(allocator, .{
             .fd = listen_fd,
             .events = posix.POLL.IN,
             .revents = 0,
@@ -49,7 +49,7 @@ pub const VsockDispatcher = struct {
         for (self.poll_fds.items) |pfd| {
             posix.close(pfd.fd);
         }
-        self.poll_fds.deinit();
+        self.poll_fds.deinit(self.allocator);
     }
 
     /// Event loop multiplexing Host and Agents
@@ -98,7 +98,7 @@ pub const VsockDispatcher = struct {
 
         std.log.info("New Agent connection from CID: {}", .{client_addr.svm_cid});
 
-        try self.poll_fds.append(.{
+        try self.poll_fds.append(self.allocator, .{
             .fd = client_fd,
             .events = posix.POLL.IN | posix.POLL.ERR | posix.POLL.HUP,
             .revents = 0,
