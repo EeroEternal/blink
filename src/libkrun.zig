@@ -46,8 +46,9 @@ pub fn setWorkdir(ctx: u32, workdir: [:0]const u8) !void {
     }
 }
 
-pub fn setExec(ctx: u32, exec_path: [:0]const u8, argv: []const ?[*:0]const u8) !void {
-    if (c.krun_set_exec(ctx, exec_path.ptr, argv.ptr, null) < 0) {
+pub fn setExec(ctx: u32, exec_path: [:0]const u8, argv: []const ?[*:0]const u8, envp: ?[]const ?[*:0]const u8) !void {
+    const envp_ptr = if (envp) |e| e.ptr else null;
+    if (c.krun_set_exec(ctx, exec_path.ptr, argv.ptr, envp_ptr) < 0) {
         return error.ConfigError;
     }
 }

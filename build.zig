@@ -17,4 +17,16 @@ pub fn build(b: *std.Build) void {
     lib.linkSystemLibrary("krun");
 
     b.installArtifact(lib);
+
+    // Provide a test executable
+    const exe = b.addExecutable(.{
+        .name = "blink-cli",
+        .root_source_file = b.path("src/main.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    exe.linkLibC();
+    exe.linkSystemLibrary("krun");
+    b.installArtifact(exe);
 }

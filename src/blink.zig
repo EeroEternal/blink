@@ -1,5 +1,7 @@
 const std = @import("std");
 const krun = @import("libkrun.zig");
+pub const path_translator = @import("path_translator.zig");
+const PathTranslator = path_translator.PathTranslator;
 
 pub const BlinkState = enum {
     PreHeat,
@@ -58,13 +60,12 @@ pub const BlinkInstance = struct {
     }
 
     /// 注入脚本内容到内存映射区 (Hot-zone preparation)
-    pub fn injectScript(self: *BlinkInstance, script_path: [:0]const u8) !void {
+    pub fn injectScript(self: *BlinkInstance, script_path: [:0]const u8, argv: []const ?[*:0]const u8, envp: []const ?[*:0]const u8) !void {
         // Agent's only write space is the hot-zone (/tmp)
         try krun.setWorkdir(self.ctx_id, "/tmp");
         
         // Execute the targeted runtime mapping
-        const args = [_]?[*:0]const u8{ script_path.ptr, null };
-        try krun.setExec(self.ctx_id, script_path, &args);
+        try krun.setExec(self.ctx_id, script_path, argv, envp);
     }
 
     /// 同步启动 vCPU，由内部线程池调用
@@ -81,17 +82,27 @@ pub const BlinkInstance = struct {
     pub fn trigger(self: *BlinkInstance, script: []const u8) !void {
         _ = script; // Script would be dynamically written to Host's Hot-zone before mapping
         
+        // Auto discover python environment and translate paths
+        const translator = try PathTranslator.init(self.allocator);
+        defer translator.deinit();
+
+        std.log.info("PathTranslator: discovered python at {s}", .{translator.host_python_path});
+        std.log.info("PathTranslator: creating mapping {s}", .{translator.mapped_volume});
+        std.log.info("PathTranslator: injecting env {s}", .{translator.env_pythonpath});
+
         // 1. 设置文件系统映射 (Virtio-fs)
         const mappings = [_][:0]const u8{
-            // Map python runtime directly into the sandbox
-            "/opt/runtimes/python3.11:/opt/runtimes/python3.11",
+            translator.mapped_volume,
             // Map the host hot-zone into guest's /tmp for RW execution
             "/tmp/agent_hotzone_cid_1:/tmp"
         };
         try self.setupFileSystem("/var/lib/blink/rootfs", &mappings);
 
-        // 2. 注入脚本内容 (assuming script was dropped into hot-zone)
-        try self.injectScript("/opt/runtimes/python3.11/bin/python3");
+        // 2. 注入脚本内容
+        const exec_path: [:0]const u8 = "/lib/runtime/bin/python3";
+        const argv = [_]?[*:0]const u8{ exec_path.ptr, "--version", null };
+        const envp = [_]?[*:0]const u8{ translator.env_pythonpath.ptr, null };
+        try self.injectScript(exec_path, &argv, &envp);
 
         // 3. 异步启动 vCPU
         const thread = try std.Thread.spawn(.{}, startVcpuThread, .{self});
