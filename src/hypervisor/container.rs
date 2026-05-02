@@ -40,8 +40,10 @@ impl Hypervisor for ContainerDriver {
             0
         });
 
-        let child_pid = clone(cb, &mut stack, flags, Some(libc::SIGCHLD as i32))
-            .map_err(|e| format!("Clone failed: {}", e))?;
+        let child_pid = unsafe {
+            clone(cb, &mut stack, flags, Some(libc::SIGCHLD as i32))
+                .map_err(|e| format!("Clone failed: {}", e))?
+        };
 
         println!("[ContainerDriver] Spawned child process: {}", child_pid);
 

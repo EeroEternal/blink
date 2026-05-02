@@ -1,4 +1,4 @@
-use nix::sys::socket::{self, AddressFamily, SockFlag, SockType, SockProtocol};
+use nix::sys::socket::{self, SockFlag, SockType, SockProtocol};
 use tokio::io::AsyncReadExt;
 use std::os::fd::{FromRawFd, AsRawFd, OwnedFd};
 use crate::protocol::{VsockPacketHeader, MessageType, BLINK_MAGIC};
@@ -10,7 +10,7 @@ pub struct VsockListener {
 impl VsockListener {
     pub fn bind(port: u32) -> Result<Self, Box<dyn std::error::Error>> {
         let fd = socket::socket(
-            AddressFamily::Vsock,
+            nix::sys::socket::AddressFamily::Vsock,
             SockType::Stream,
             SockProtocol::from(0),
             SockFlag::SOCK_NONBLOCK,
@@ -18,10 +18,7 @@ impl VsockListener {
         
         let owned_fd = unsafe { OwnedFd::from_raw_fd(fd) };
 
-        // For AF_VSOCK, we need to manually construct sockaddr_vm or use nix if supported.
-        // Since nix might not expose sockaddr_vm easily, we use raw libc structures if needed.
-        // Actually nix::sys::socket::UnixAddr is for unix. 
-        // Let's use libc::sockaddr_vm directly for vsock.
+        // Use raw libc for vsock bind
         let addr = libc::sockaddr_vm {
             svm_family: libc::AF_VSOCK as u16,
             svm_reserved1: 0,
@@ -30,9 +27,17 @@ impl VsockListener {
             svm_zero: [0; 4],
         };
 
-        let addr_ptr = &addr as *const libc::sockaddr_vm as *const libc::sockaddr;
-        socket::bind(owned_fd.as_raw_fd(), addr_ptr, std::mem::size_of::<libc::sockaddr_vm>() as u32)?;
-        socket::listen(owned_fd.as_raw_fd(), 128)?;
+        let res = unsafe {
+            libc::bind(
+                owned_fd.as_raw_fd(),
+                &addr as *const libc::sockaddr_vm as *const libc::sockaddr,
+                std::mem::size_of::<libc::sockaddr_vm>() as u32,
+            )
+        };
+        if res != 0 { return Err("bind failed".into()); }
+        
+        let res = unsafe { libc::listen(owned_fd.as_raw_fd(), 128) };
+        if res != 0 { return Err("listen failed".into()); }
 
         Ok(Self { fd: owned_fd })
     }
