@@ -35,10 +35,10 @@ impl Hypervisor for ContainerDriver {
             | CloneFlags::CLONE_NEWUTS 
             | CloneFlags::CLONE_NEWIPC;
 
-        let cb = || -> isize {
+        let cb = Box::new(|| -> isize {
             println!("[ContainerDriver] Inside isolated namespace (PID: 1)");
             0
-        };
+        });
 
         let child_pid = clone(cb, &mut stack, flags, Some(libc::SIGCHLD as i32))
             .map_err(|e| format!("Clone failed: {}", e))?;

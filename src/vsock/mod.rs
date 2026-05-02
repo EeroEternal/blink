@@ -1,6 +1,6 @@
-use nix::sys::socket::{self, AddressFamily, SockFlag, SockType};
+use nix::sys::socket::{self, AddressFamily, SockFlag, SockType, SockProtocol};
 use tokio::io::unix::AsyncFd;
-use std::os::fd::{FromRawFd, IntoRawFd};
+use std::os::fd::{FromRawFd, AsRawFd};
 use crate::protocol::{VsockPacketHeader, MessageType, BLINK_MAGIC};
 
 pub struct VsockListener {
@@ -12,14 +12,13 @@ impl VsockListener {
         let fd = socket::socket(
             AddressFamily::Vsock,
             SockType::Stream,
-            socket::SockProtocol::Connect,
+            SockProtocol::None,
             SockFlag::SOCK_NONBLOCK,
         )?;
         
         let owned_fd = unsafe { std::os::unix::io::OwnedFd::from_raw_fd(fd) };
 
         // Bind and Listen using nix
-        // Note: For Vsock, we use VsockAddr, but we must use it correctly with nix
         use nix::sys::socket::sockaddr_vm;
         let addr = sockaddr_vm::new(2, port); // VMADDR_CID_HOST
         socket::bind(owned_fd.as_raw_fd(), &addr)?;
@@ -44,21 +43,20 @@ impl VsockListener {
 }
 
 pub async fn handle_agent(owned_fd: std::os::unix::io::OwnedFd) -> Result<(), Box<dyn std::error::Error>> {
-    let mut async_fd = AsyncFd::new(owned_fd)?;
+    let async_fd = AsyncFd::new(owned_fd)?;
     let mut header_buf = [0u8; std::mem::size_of::<VsockPacketHeader>()];
     
     loop {
         let mut guard = async_fd.readable().await?;
+        let reader = guard.get_ref();
         
-        // Non-blocking read for header
-        let mut reader = &*guard.get_ref();
-        use std::io::Read;
+        use tokio::io::AsyncReadExt;
         
-        match reader.read_exact(&mut header_buf) {
+        match reader.read_exact(&mut header_buf).await {
             Ok(_) => {
                 let header: VsockPacketHeader = unsafe { std::ptr::read(header_buf.as_ptr() as *const _) };
                 let mut payload = vec![0u8; header.payload_len as usize];
-                reader.read_exact(&mut payload)?;
+                reader.read_exact(&mut payload).await?;
 
                 match header.msg_type {
                     0x10 => println!("V-Hub: Received RpcRequest: {}", String::from_utf8_lossy(&payload)),
