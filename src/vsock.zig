@@ -156,10 +156,9 @@ pub const VsockDispatcher = struct {
                 defer self.allocator.free(response);
                 _ = try posix.write(fd, response);
             },
-            .RpcRequest => {
                 // Print purely the JSON payload to stdout so the calling Python SDK can parse it
-                const stdout = std.io.getStdOut().writer();
-                try stdout.print("{s}\n", .{payload});
+                const stdout = std.io.getStdOut();
+                try stdout.writer().print("{s}\n", .{payload});
 
                 // Acknowledge the agent so it can shut down cleanly
                 const response_payload = "{\"result\":\"ack\"}";
@@ -174,12 +173,12 @@ pub const VsockDispatcher = struct {
             },
             .Stdout, .Stderr => {
                 // Real-time data plane: Stream stdout/stderr to Host stderr for observability
-                const stderr = std.io.getStdErr().writer();
+                const stderr = std.io.getStdErr();
                 const prefix = if (msg_type == .Stdout) "[Guest Stdout] " else "[Guest Stderr] ";
-                try stderr.print("{s}{s}", .{prefix, payload});
+                try stderr.writer().print("{s}{s}", .{prefix, payload});
                 // Ensure newline if not present for cleaner terminal output
                 if (payload.len > 0 and payload[payload.len-1] != '\n') {
-                    try stderr.print("\n", .{});
+                    try stderr.writer().print("\n", .{});
                 }
             },
             else => {
