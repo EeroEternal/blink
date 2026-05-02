@@ -12,11 +12,11 @@ pub const sockaddr_vm = extern struct {
 };
 
 /// VsockDispatcher serves as the "Message Gateway" for the V-Hub.
-/// It uses epoll for non-blocking asynchronous event loop to route Agent interactions.
+/// It uses a standard non-blocking poll loop to route Agent interactions.
 pub const VsockDispatcher = struct {
     allocator: std.mem.Allocator,
-    epfd: posix.fd_t,
     listen_fd: posix.fd_t,
+    poll_fds: std.ArrayList(posix.pollfd),
 
     pub fn init(allocator: std.mem.Allocator, port: u32) !VsockDispatcher {
         const listen_fd = try posix.socket(AF_VSOCK, posix.SOCK.STREAM | posix.SOCK.NONBLOCK, 0);
@@ -30,44 +30,58 @@ pub const VsockDispatcher = struct {
         try posix.bind(listen_fd, @ptrCast(&addr), @sizeOf(sockaddr_vm));
         try posix.listen(listen_fd, 128);
 
-        // epoll setup for asynchronous dispatching
-        const epfd = try posix.epoll_create1(0);
-        errdefer posix.close(epfd);
-
-        var ev = posix.epoll_event{
-            .events = posix.linux.EPOLL.IN,
-            .data = .{ .fd = listen_fd },
-        };
-        try posix.epoll_ctl(epfd, posix.linux.EPOLL.CTL_ADD, listen_fd, &ev);
+        var poll_fds = std.ArrayList(posix.pollfd).init(allocator);
+        try poll_fds.append(.{
+            .fd = listen_fd,
+            .events = posix.POLL.IN,
+            .revents = 0,
+        });
 
         return VsockDispatcher{
             .allocator = allocator,
-            .epfd = epfd,
             .listen_fd = listen_fd,
+            .poll_fds = poll_fds,
         };
     }
 
     pub fn deinit(self: *VsockDispatcher) void {
-        posix.close(self.listen_fd);
-        posix.close(self.epfd);
+        for (self.poll_fds.items) |pfd| {
+            posix.close(pfd.fd);
+        }
+        self.poll_fds.deinit();
     }
 
     /// Event loop multiplexing Host and Agents
     pub fn serve(self: *VsockDispatcher) !void {
-        var events: [64]posix.epoll_event = undefined;
-
         while (true) {
-            const num_events = posix.epoll_wait(self.epfd, &events, -1);
+            const num_events = posix.poll(self.poll_fds.items, -1) catch |err| {
+                std.log.err("poll failed: {}", .{err});
+                continue;
+            };
             if (num_events == 0) continue;
 
-            for (events[0..num_events]) |ev| {
-                if (ev.data.fd == self.listen_fd) {
-                    try self.acceptConnection();
+            // Iterate backwards to safely remove closed fds
+            var i: usize = self.poll_fds.items.len;
+            while (i > 0) {
+                i -= 1;
+                const pfd = self.poll_fds.items[i];
+
+                if (pfd.revents == 0) continue;
+
+                if (pfd.fd == self.listen_fd) {
+                    if ((pfd.revents & posix.POLL.IN) != 0) {
+                        try self.acceptConnection();
+                    }
                 } else {
-                    self.handleClient(ev) catch |err| {
+                    const keep_alive = self.handleClient(pfd.fd, pfd.revents) catch |err| blk: {
                         std.log.err("Client handler error: {}", .{err});
-                        posix.close(ev.data.fd);
+                        break :blk false;
                     };
+
+                    if (!keep_alive) {
+                        posix.close(pfd.fd);
+                        _ = self.poll_fds.orderedRemove(i);
+                    }
                 }
             }
         }
@@ -83,36 +97,42 @@ pub const VsockDispatcher = struct {
 
         std.log.info("New Agent connection from CID: {}", .{client_addr.svm_cid});
 
-        var new_ev = posix.epoll_event{
-            .events = posix.linux.EPOLL.IN | posix.linux.EPOLL.RDHUP,
-            .data = .{ .fd = client_fd },
-        };
-        try posix.epoll_ctl(self.epfd, posix.linux.EPOLL.CTL_ADD, client_fd, &new_ev);
+        try self.poll_fds.append(.{
+            .fd = client_fd,
+            .events = posix.POLL.IN | posix.POLL.ERR | posix.POLL.HUP,
+            .revents = 0,
+        });
     }
 
-    fn handleClient(self: *VsockDispatcher, ev: posix.epoll_event) !void {
+    /// Returns true if the connection should be kept alive, false if it should be closed
+    fn handleClient(self: *VsockDispatcher, fd: posix.fd_t, revents: i16) !bool {
         _ = self;
-        if ((ev.events & posix.linux.EPOLL.RDHUP) != 0) {
-            posix.close(ev.data.fd);
-            return;
+        if ((revents & posix.POLL.HUP) != 0 or (revents & posix.POLL.ERR) != 0) {
+            return false;
         }
 
         var buf: [4096]u8 = undefined;
-        const len = posix.read(ev.data.fd, &buf) catch |err| {
-            if (err == error.WouldBlock) return;
+        const len = posix.read(fd, &buf) catch |err| {
+            if (err == error.WouldBlock) return true;
             return err;
         };
 
         if (len == 0) {
-            posix.close(ev.data.fd);
-            return;
+            return false; // EOF
         }
 
         const msg = buf[0..len];
-        std.log.info("V-Hub intercepted {} bytes from Agent. Auditing/Routing...", .{len});
+        std.log.info("V-Hub intercepted {} bytes from Agent: {s}", .{len, msg});
         
-        // Proxy routing implementation goes here
-        // E.g., matching destination CID and forwarding packets
-        _ = try posix.write(ev.data.fd, msg);
+        // Protocol Implementation: Handshake
+        if (std.mem.startsWith(u8, msg, "Hello, Host!")) {
+            std.log.info("V-Hub: Answering 'Hello, Blink!'", .{});
+            _ = try posix.write(fd, "Hello, Blink!");
+        } else {
+            // Proxy routing implementation goes here
+            _ = try posix.write(fd, msg);
+        }
+
+        return true;
     }
 };
