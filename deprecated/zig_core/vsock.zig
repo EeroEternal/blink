@@ -158,7 +158,7 @@ pub const VsockDispatcher = struct {
             },
             .RpcRequest => {
                 // Print purely the JSON payload to stdout so the calling Python SDK can parse it
-                const stdout = std.io.getStdOut();
+                var stdout = std.io.getStdOut();
                 try stdout.writer().print("{s}\n", .{payload});
 
                 // Acknowledge the agent so it can shut down cleanly
