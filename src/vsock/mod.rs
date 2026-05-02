@@ -1,10 +1,10 @@
 use nix::sys::socket::{self, AddressFamily, SockFlag, SockType, SockProtocol};
-use tokio::io::unix::AsyncFd;
+use tokio::io::AsyncReadExt;
 use std::os::fd::{FromRawFd, AsRawFd};
 use crate::protocol::{VsockPacketHeader, MessageType, BLINK_MAGIC};
 
 pub struct VsockListener {
-    async_fd: AsyncFd<std::os::unix::io::OwnedFd>,
+    fd: i32,
 }
 
 impl VsockListener {
@@ -12,26 +12,27 @@ impl VsockListener {
         let fd = socket::socket(
             AddressFamily::Vsock,
             SockType::Stream,
-            SockProtocol::None,
+            SockProtocol::from(0), // AF_VSOCK protocol
             SockFlag::SOCK_NONBLOCK,
         )?;
         
-        let owned_fd = unsafe { std::os::unix::io::OwnedFd::from_raw_fd(fd) };
-
-        // Bind and Listen using nix
         use nix::sys::socket::sockaddr_vm;
-        let addr = sockaddr_vm::new(2, port); // VMADDR_CID_HOST
-        socket::bind(owned_fd.as_raw_fd(), &addr)?;
-        socket::listen(owned_fd.as_raw_fd(), 128)?;
+        let addr = sockaddr_vm::new(nix::sys::socket::VMADDR_CID_ANY, port);
+        socket::bind(fd, &addr)?;
+        socket::listen(fd, 128)?;
 
-        Ok(Self { async_fd: AsyncFd::new(owned_fd)? })
+        Ok(Self { fd })
     }
 
-    pub async fn accept(&self) -> Result<std::os::unix::io::OwnedFd, Box<dyn std::error::Error>> {
+    pub async fn accept(&self) -> Result<i32, Box<dyn std::error::Error>> {
+        let async_fd = tokio::io::unix::AsyncFd::new(unsafe { std::os::unix::io::OwnedFd::from_raw_fd(self.fd) })?;
         loop {
-            let mut guard = self.async_fd.readable().await?;
+            let mut guard = async_fd.readable().await?;
             match socket::accept(guard.get_ref().as_raw_fd()) {
-                Ok(fd) => return Ok(unsafe { std::os::unix::io::OwnedFd::from_raw_fd(fd) }),
+                Ok(fd) => {
+                    let _ = async_fd.into_inner().into_raw_fd(); 
+                    return Ok(fd);
+                },
                 Err(e) if e == nix::errno::Errno::EAGAIN => {
                     guard.clear_ready();
                     continue;
@@ -42,31 +43,25 @@ impl VsockListener {
     }
 }
 
-pub async fn handle_agent(owned_fd: std::os::unix::io::OwnedFd) -> Result<(), Box<dyn std::error::Error>> {
-    let async_fd = AsyncFd::new(owned_fd)?;
+pub async fn handle_agent(fd: i32) -> Result<(), Box<dyn std::error::Error>> {
+    let mut stream = tokio::net::UnixStream::from_std(
+        unsafe { std::os::unix::net::UnixStream::from_raw_fd(fd) }
+    )?;
+    
     let mut header_buf = [0u8; std::mem::size_of::<VsockPacketHeader>()];
     
     loop {
-        let mut guard = async_fd.readable().await?;
-        let reader = guard.get_ref();
-        
-        use tokio::io::AsyncReadExt;
-        
-        match reader.read_exact(&mut header_buf).await {
+        match stream.read_exact(&mut header_buf).await {
             Ok(_) => {
                 let header: VsockPacketHeader = unsafe { std::ptr::read(header_buf.as_ptr() as *const _) };
                 let mut payload = vec![0u8; header.payload_len as usize];
-                reader.read_exact(&mut payload).await?;
+                stream.read_exact(&mut payload).await?;
 
                 match header.msg_type {
                     0x10 => println!("V-Hub: Received RpcRequest: {}", String::from_utf8_lossy(&payload)),
                     0x30 => print!("[Guest Stdout] {}", String::from_utf8_lossy(&payload)),
                     _ => println!("Unhandled message type: {}", header.msg_type),
                 }
-            },
-            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                guard.clear_ready();
-                continue;
             },
             Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
             Err(e) => return Err(e.into()),
