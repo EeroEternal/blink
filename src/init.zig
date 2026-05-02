@@ -1,5 +1,17 @@
 const std = @import("std");
 const posix = std.posix;
+const protocol = @import("protocol.zig");
+
+// Linux AF_VSOCK is 40
+pub const AF_VSOCK: u16 = 40;
+
+pub const sockaddr_vm = extern struct {
+    svm_family: u16 = AF_VSOCK,
+    svm_reserved1: u16 = 0,
+    svm_port: u32,
+    svm_cid: u32,
+    svm_zero: [4]u8 = [_]u8{0} ** 4,
+};
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -9,8 +21,7 @@ pub fn main() !void {
     var args_iter = try std.process.argsWithAllocator(allocator);
     defer args_iter.deinit();
 
-    // Skip the first argument which is the path to the init binary itself (e.g., "/init")
-    _ = args_iter.skip();
+    _ = args_iter.skip(); // skip /init
 
     var cmd_args = std.ArrayList([]const u8).empty;
     defer cmd_args.deinit(allocator);
@@ -20,18 +31,41 @@ pub fn main() !void {
     }
 
     if (cmd_args.items.len == 0) {
-        std.debug.print("Blink-Init: No command provided to execute.\n", .{});
+        std.debug.print("Blink-Init: No command provided.\n", .{});
         posix.exit(1);
     }
 
-    std.debug.print("Blink-Init: Booting up. Target payload: {s}\n", .{cmd_args.items[0]});
+    // Connect to V-Hub (Host) before forking
+    const vsock_fd = try posix.socket(AF_VSOCK, posix.SOCK.STREAM, 0);
+    defer posix.close(vsock_fd);
+
+    var addr = sockaddr_vm{
+        .svm_port = 10000,
+        .svm_cid = 2, // VMADDR_CID_HOST
+    };
+
+    // Try to connect to host (V-Hub)
+    posix.connect(vsock_fd, @ptrCast(&addr), @sizeOf(sockaddr_vm)) catch |err| {
+        std.debug.print("Blink-Init: Failed to connect to V-Hub: {}\n", .{err});
+        // Continue anyway, but we won't be able to stream logs
+    };
+
+    // Create pipes for stdout/stderr redirection
+    const pipe_out = try posix.pipe();
+    const pipe_err = try posix.pipe();
 
     const pid = try posix.fork();
     if (pid == 0) {
-        // Child process: execute the target payload
+        // Child: Redirection
+        try posix.dup2(pipe_out[1], posix.STDOUT_FILENO);
+        try posix.dup2(pipe_err[1], posix.STDERR_FILENO);
+        posix.close(pipe_out[0]);
+        posix.close(pipe_out[1]);
+        posix.close(pipe_err[0]);
+        posix.close(pipe_err[1]);
+
         var c_args = try allocator.alloc(?[*:0]const u8, cmd_args.items.len + 1);
         for (cmd_args.items, 0..) |arg, i| {
-            // Need null-terminated strings for execveZ
             const z_arg = try allocator.dupeZ(u8, arg);
             c_args[i] = z_arg.ptr;
         }
@@ -45,37 +79,50 @@ pub fn main() !void {
         const envp: [*:null]const ?[*:0]const u8 = @ptrCast(c_env.ptr);
 
         const exec_path = try allocator.dupeZ(u8, cmd_args.items[0]);
-        
-        const err = posix.execveZ(exec_path.ptr, @ptrCast(c_args.ptr), envp);
-        
-        std.debug.print("Blink-Init: Failed to exec payload '{s}': {}\n", .{exec_path, err});
+        const exec_err = posix.execveZ(exec_path.ptr, @ptrCast(c_args.ptr), envp);
+        std.debug.print("Blink-Init: execveZ failed: {}\n", .{exec_err});
         posix.exit(1);
     }
 
-    // Parent process: Zombie Reaper loop
-    var main_child_exit_status: u8 = 1;
+    // Parent: Protocol Relay
+    posix.close(pipe_out[1]);
+    posix.close(pipe_err[1]);
 
-    while (true) {
-        const wait_res = posix.waitpid(-1, 0);
-        const wpid = wait_res.pid;
-        const status = wait_res.status;
+    var poll_fds = [_]posix.pollfd{
+        .{ .fd = pipe_out[0], .events = posix.POLL.IN, .revents = 0 },
+        .{ .fd = pipe_err[0], .events = posix.POLL.IN, .revents = 0 },
+    };
 
-        if (wpid == pid) {
-            // The main payload exited. We can shut down the sandbox now.
-            if (posix.W.IFEXITED(status)) {
-                main_child_exit_status = @intCast(posix.W.EXITSTATUS(status));
-                std.debug.print("Blink-Init: Main payload exited with status {}\n", .{main_child_exit_status});
-            } else if (posix.W.IFSIGNALED(status)) {
-                main_child_exit_status = 128 + @as(u8, @intCast(posix.W.TERMSIG(status)));
-                std.debug.print("Blink-Init: Main payload terminated by signal {}\n", .{posix.W.TERMSIG(status)});
+    var buf: [4096]u8 = undefined;
+    var running_count: usize = 2;
+
+    while (running_count > 0) {
+        const ready = try posix.poll(&poll_fds, -1);
+        if (ready == 0) continue;
+
+        for (&poll_fds) |*pfd| {
+            if (pfd.revents == 0) continue;
+
+            if ((pfd.revents & (posix.POLL.IN | posix.POLL.HUP)) != 0) {
+                const len = posix.read(pfd.fd, &buf) catch 0;
+                if (len == 0) {
+                    pfd.fd = -1; // Stop polling this fd
+                    running_count -= 1;
+                    continue;
+                }
+
+                const msg_type: protocol.MessageType = if (pfd.fd == pipe_out[0]) .Stdout else .Stderr;
+                
+                // Wrap and send over Vsock
+                const packet = try protocol.VsockProtocol.encodePacketAlloc(allocator, msg_type, 0, buf[0..len]);
+                defer allocator.free(packet);
+                _ = posix.write(vsock_fd, packet) catch |err| {
+                    std.debug.print("Blink-Init: Vsock write error: {}\n", .{err});
+                };
             }
-            break;
-        } else if (wpid > 0) {
-            // A zombie process was reaped. Just log it for debugging.
-            std.debug.print("Blink-Init: Reaped zombie child PID {}\n", .{wpid});
         }
     }
 
-    std.debug.print("Blink-Init: Shutting down sandbox.\n", .{});
-    posix.exit(main_child_exit_status);
+    const wait_res = posix.waitpid(pid, 0);
+    posix.exit(@intCast(posix.W.EXITSTATUS(wait_res.status)));
 }

@@ -11,6 +11,9 @@ pub const MessageType = enum(u8) {
     RpcResponse = 0x11,
     RpcError = 0x12,
 
+    Stdout = 0x30,
+    Stderr = 0x31,
+
     StreamData = 0x20,
     StreamEnd = 0x21,
     

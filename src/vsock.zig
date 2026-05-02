@@ -172,6 +172,16 @@ pub const VsockDispatcher = struct {
                 // Signal the event loop to exit since the agent's task is done
                 should_exit.* = true;
             },
+            .Stdout, .Stderr => {
+                // Real-time data plane: Stream stdout/stderr to Host stderr for observability
+                const stderr = std.io.getStdErr().writer();
+                const prefix = if (msg_type == .Stdout) "[Guest Stdout] " else "[Guest Stderr] ";
+                try stderr.print("{s}{s}", .{prefix, payload});
+                // Ensure newline if not present for cleaner terminal output
+                if (payload.len > 0 and payload[payload.len-1] != '\n') {
+                    try stderr.print("\n", .{});
+                }
+            },
             else => {
                 std.debug.print("V-Hub Protocol: Unhandled message type: {}\n", .{header.msg_type});
             }
