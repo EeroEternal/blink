@@ -1,5 +1,5 @@
 const std = @import("std");
-const hypervisor = @import("hypervisor.zig");
+const hypervisor = @import("../hypervisor.zig");
 
 pub const QemuBackend = struct {
     

@@ -1,6 +1,6 @@
 const std = @import("std");
-const hypervisor = @import("hypervisor.zig");
-const krun = @import("libkrun.zig");
+const hypervisor = @import("../hypervisor.zig");
+const krun = @import("../libkrun.zig");
 
 pub const KrunBackend = struct {
     ctx_id: u32,
