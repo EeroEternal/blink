@@ -2,6 +2,9 @@ import socket
 import struct
 import json
 import time
+import sys
+import io
+from contextlib import redirect_stdout, redirect_stderr
 
 # Linux AF_VSOCK is 40
 AF_VSOCK = getattr(socket, "AF_VSOCK", 40)
@@ -75,6 +78,39 @@ class VsockClient:
     def close(self):
         self.sock.close()
 
+def execute_and_report(client: VsockClient, code: str):
+    f_out = io.StringIO()
+    f_err = io.StringIO()
+    exit_code = 0
+    
+    # Intercept standard output and errors
+    with redirect_stdout(f_out), redirect_stderr(f_err):
+        try:
+            exec(code)
+        except Exception as e:
+            print(f"Execution Error: {e}", file=sys.stderr)
+            import traceback
+            traceback.print_exc(file=sys.stderr)
+            exit_code = 1
+            
+    # Assemble structured JSON
+    payload = {
+        "event": "execution_result",
+        "stdout": f_out.getvalue(),
+        "stderr": f_err.getvalue(),
+        "exit_code": exit_code,
+        "metrics": {"memory_mb": 42} # Placeholder for future expansion
+    }
+    
+    print(f"[Agent] Reporting execution back to Host...")
+    client.send_message(MessageType.RpcRequest, json.dumps(payload).encode('utf-8'))
+    
+    # Wait for acknowledgment
+    msg_type, req_id, response_payload = client.recv_message()
+    if msg_type == MessageType.RpcResponse:
+        response_data = json.loads(response_payload.decode('utf-8'))
+        print(f"[Agent] Host Acknowledged: {response_data}")
+
 def main():
     print("[Agent] Booting up inside Blink Sandbox...")
     
@@ -87,24 +123,16 @@ def main():
         msg_type, req_id, payload = client.recv_message()
         print(f"[Agent] Handshake response: {payload.decode()}")
         
-        # 2. Send JSON RPC Request
-        rpc_payload = {
-            "method": "tool.execute",
-            "params": {
-                "tool": "python",
-                "code": "print('hello from sandbox')"
-            },
-            "timeout_ms": 30000
-        }
-        
-        print(f"[Agent] Sending RPC Request...")
-        client.send_message(MessageType.RpcRequest, json.dumps(rpc_payload).encode('utf-8'))
-        
-        # Wait for RPC response
-        msg_type, req_id, payload = client.recv_message()
-        if msg_type == MessageType.RpcResponse:
-            response_data = json.loads(payload.decode('utf-8'))
-            print(f"[Agent] RPC Response: {response_data}")
+        # 2. Execute unsafe agent script and report structured output
+        unsafe_code = """
+import time
+print("Step 1: Starting Agent Task...")
+time.sleep(0.5)
+print("Step 2: Processing Data...")
+# Simulate an intentional error
+raise ValueError("Simulated Agent Crash")
+        """
+        execute_and_report(client, unsafe_code)
         
         # Keep connection alive for a brief moment
         time.sleep(1)
