@@ -45,7 +45,7 @@ impl VsockListener {
             
             let addr = libc::sockaddr_in {
                 sin_family: libc::AF_INET as u16,
-                sin_port: port.to_be(),
+                sin_port: (port as u16).to_be(),
                 sin_addr: libc::in_addr { s_addr: 0x0100007f }, // 127.0.0.1
                 sin_zero: [0; 8],
             };
