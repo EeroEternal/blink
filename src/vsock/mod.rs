@@ -1,75 +1,76 @@
-use nix::sys::socket::{self, SockFlag, SockType, AddressFamily, InetAddr, SockAddr};
-use tokio::io::AsyncReadExt;
 use std::os::fd::{FromRawFd, AsRawFd, OwnedFd, IntoRawFd};
+use tokio::io::AsyncReadExt;
 use crate::protocol::{VsockPacketHeader, MessageType, BLINK_MAGIC};
 
 pub struct VsockListener {
     fd: OwnedFd,
-    is_vsock: bool,
 }
 
 impl VsockListener {
     pub fn bind(port: u32) -> Result<Self, Box<dyn std::error::Error>> {
-        // Try AF_VSOCK first
-        let fd_res = socket::socket(
-            AddressFamily::Vsock,
-            SockType::Stream,
-            None,
-            SockFlag::SOCK_NONBLOCK,
-        );
-
-        match fd_res {
-            Ok(fd) => {
-                let owned_fd = unsafe { OwnedFd::from_raw_fd(fd) };
-                let addr = libc::sockaddr_vm {
-                    svm_family: libc::AF_VSOCK as u16,
-                    svm_reserved1: 0,
-                    svm_port: port,
-                    svm_cid: libc::VMADDR_CID_ANY,
-                    svm_zero: [0; 4],
-                };
-                let res = unsafe {
-                    libc::bind(owned_fd.as_raw_fd(), &addr as *const libc::sockaddr_vm as *const libc::sockaddr, std::mem::size_of::<libc::sockaddr_vm>() as u32)
-                };
-                if res == 0 {
-                    unsafe { libc::listen(owned_fd.as_raw_fd(), 128) };
-                    return Ok(Self { fd: owned_fd, is_vsock: true });
-                }
-            }
-            Err(_) => {}
-        }
-
-        // Fallback to TCP/IP (localhost)
-        println!("[V-Hub] Vsock unavailable, falling back to TCP (127.0.0.1:{})", port);
-        let fd = socket::socket(
-            AddressFamily::Inet,
-            SockType::Stream,
-            None,
-            SockFlag::SOCK_NONBLOCK,
-        )?;
-        let owned_fd = unsafe { OwnedFd::from_raw_fd(fd) };
+        // Try AF_VSOCK
+        let fd = unsafe {
+            libc::socket(
+                libc::AF_VSOCK,
+                libc::SOCK_STREAM | libc::SOCK_NONBLOCK,
+                0,
+            )
+        };
         
-        let addr = nix::sys::socket::SockAddr::new_inet(nix::sys::socket::InetAddr::new(
-            nix::sys::socket::Ipv4Addr::new(127, 0, 0, 1).into(),
-            port as u16,
-        ));
-        socket::bind(owned_fd.as_raw_fd(), &addr)?;
-        socket::listen(owned_fd.as_raw_fd(), 128)?;
+        let owned_fd = if fd >= 0 {
+            let addr = libc::sockaddr_vm {
+                svm_family: libc::AF_VSOCK as u16,
+                svm_reserved1: 0,
+                svm_port: port,
+                svm_cid: libc::VMADDR_CID_ANY,
+                svm_zero: [0; 4],
+            };
+            
+            unsafe {
+                libc::bind(fd, &addr as *const libc::sockaddr_vm as *const libc::sockaddr, std::mem::size_of::<libc::sockaddr_vm>() as u32);
+                libc::listen(fd, 128);
+                OwnedFd::from_raw_fd(fd)
+            }
+        } else {
+            // Fallback TCP
+            println!("[V-Hub] Vsock unavailable, falling back to TCP (127.0.0.1:{})", port);
+            let tcp_fd = unsafe {
+                libc::socket(
+                    libc::AF_INET,
+                    libc::SOCK_STREAM | libc::SOCK_NONBLOCK,
+                    0,
+                )
+            };
+            let tcp_fd = unsafe { OwnedFd::from_raw_fd(tcp_fd) };
+            
+            let addr = libc::sockaddr_in {
+                sin_family: libc::AF_INET as u16,
+                sin_port: port.to_be(),
+                sin_addr: libc::in_addr { s_addr: 0x0100007f }, // 127.0.0.1
+                sin_zero: [0; 8],
+            };
+            
+            unsafe {
+                libc::bind(tcp_fd.as_raw_fd(), &addr as *const libc::sockaddr_in as *const libc::sockaddr, std::mem::size_of::<libc::sockaddr_in>() as u32);
+                libc::listen(tcp_fd.as_raw_fd(), 128);
+            }
+            tcp_fd
+        };
 
-        Ok(Self { fd: owned_fd, is_vsock: false })
+        Ok(Self { fd: owned_fd })
     }
 
     pub async fn accept(&self) -> Result<OwnedFd, Box<dyn std::error::Error>> {
         let async_fd = tokio::io::unix::AsyncFd::new(unsafe { OwnedFd::from_raw_fd(self.fd.as_raw_fd()) })?;
         loop {
             let mut guard = async_fd.readable().await?;
-            match socket::accept(self.fd.as_raw_fd()) {
-                Ok(fd) => return Ok(unsafe { OwnedFd::from_raw_fd(fd) }),
-                Err(e) if e == nix::errno::Errno::EAGAIN => {
-                    guard.clear_ready();
-                    continue;
-                }
-                Err(e) => return Err(e.into()),
+            let client_fd = unsafe { libc::accept(self.fd.as_raw_fd(), std::ptr::null_mut(), std::ptr::null_mut()) };
+            
+            if client_fd >= 0 {
+                return Ok(unsafe { OwnedFd::from_raw_fd(client_fd) });
+            } else {
+                guard.clear_ready();
+                continue;
             }
         }
     }
