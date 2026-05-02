@@ -1,10 +1,10 @@
 use nix::sys::socket::{self, AddressFamily, SockFlag, SockType, SockProtocol};
 use tokio::io::AsyncReadExt;
-use std::os::fd::{FromRawFd, AsRawFd};
+use std::os::fd::{FromRawFd, AsRawFd, OwnedFd};
 use crate::protocol::{VsockPacketHeader, MessageType, BLINK_MAGIC};
 
 pub struct VsockListener {
-    fd: i32,
+    fd: OwnedFd,
 }
 
 impl VsockListener {
@@ -12,26 +12,38 @@ impl VsockListener {
         let fd = socket::socket(
             AddressFamily::Vsock,
             SockType::Stream,
-            SockProtocol::from(0), // AF_VSOCK protocol
+            SockProtocol::from(0),
             SockFlag::SOCK_NONBLOCK,
         )?;
         
-        use nix::sys::socket::sockaddr_vm;
-        let addr = sockaddr_vm::new(nix::sys::socket::VMADDR_CID_ANY, port);
-        socket::bind(fd, &addr)?;
-        socket::listen(fd, 128)?;
+        let owned_fd = unsafe { OwnedFd::from_raw_fd(fd) };
 
-        Ok(Self { fd })
+        // For AF_VSOCK, we need to manually construct sockaddr_vm or use nix if supported.
+        // Since nix might not expose sockaddr_vm easily, we use raw libc structures if needed.
+        // Actually nix::sys::socket::UnixAddr is for unix. 
+        // Let's use libc::sockaddr_vm directly for vsock.
+        let addr = libc::sockaddr_vm {
+            svm_family: libc::AF_VSOCK as u16,
+            svm_reserved1: 0,
+            svm_port: port,
+            svm_cid: libc::VMADDR_CID_ANY,
+            svm_zero: [0; 4],
+        };
+
+        let addr_ptr = &addr as *const libc::sockaddr_vm as *const libc::sockaddr;
+        socket::bind(owned_fd.as_raw_fd(), addr_ptr, std::mem::size_of::<libc::sockaddr_vm>() as u32)?;
+        socket::listen(owned_fd.as_raw_fd(), 128)?;
+
+        Ok(Self { fd: owned_fd })
     }
 
-    pub async fn accept(&self) -> Result<i32, Box<dyn std::error::Error>> {
-        let async_fd = tokio::io::unix::AsyncFd::new(unsafe { std::os::unix::io::OwnedFd::from_raw_fd(self.fd) })?;
+    pub async fn accept(&self) -> Result<OwnedFd, Box<dyn std::error::Error>> {
+        let async_fd = tokio::io::unix::AsyncFd::new(unsafe { OwnedFd::from_raw_fd(self.fd.as_raw_fd()) })?;
         loop {
             let mut guard = async_fd.readable().await?;
-            match socket::accept(guard.get_ref().as_raw_fd()) {
+            match socket::accept(self.fd.as_raw_fd()) {
                 Ok(fd) => {
-                    let _ = async_fd.into_inner().into_raw_fd(); 
-                    return Ok(fd);
+                    return Ok(unsafe { OwnedFd::from_raw_fd(fd) });
                 },
                 Err(e) if e == nix::errno::Errno::EAGAIN => {
                     guard.clear_ready();
@@ -43,9 +55,9 @@ impl VsockListener {
     }
 }
 
-pub async fn handle_agent(fd: i32) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn handle_agent(owned_fd: OwnedFd) -> Result<(), Box<dyn std::error::Error>> {
     let mut stream = tokio::net::UnixStream::from_std(
-        unsafe { std::os::unix::net::UnixStream::from_raw_fd(fd) }
+        unsafe { std::os::unix::net::UnixStream::from_raw_fd(owned_fd.into_raw_fd()) }
     )?;
     
     let mut header_buf = [0u8; std::mem::size_of::<VsockPacketHeader>()];
