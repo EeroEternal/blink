@@ -1,13 +1,10 @@
-use nix::sys::socket::{self, AddressFamily, SockFlag, SockType, VsockAddr};
-use tokio::io::{AsyncReadExt};
-use tokio::net::UnixListener; // Note: We use raw sockets for Vsock
-use std::os::unix::io::FromRawFd;
-use tokio::net::TcpStream; // We need a custom wrapper for Vsock
+use nix::sys::socket::{self, AddressFamily, SockFlag, SockType};
+use tokio::io::unix::AsyncFd;
+use std::os::fd::{FromRawFd, IntoRawFd};
 use crate::protocol::{VsockPacketHeader, MessageType, BLINK_MAGIC};
 
-// Vsock is not natively supported in tokio::net, so we use mio/nix to wrap it
 pub struct VsockListener {
-    fd: i32,
+    async_fd: AsyncFd<std::os::unix::io::OwnedFd>,
 }
 
 impl VsockListener {
@@ -18,20 +15,26 @@ impl VsockListener {
             socket::SockProtocol::Connect,
             SockFlag::SOCK_NONBLOCK,
         )?;
+        
+        let owned_fd = unsafe { std::os::unix::io::OwnedFd::from_raw_fd(fd) };
 
-        let addr = VsockAddr::new(socket::VMADDR_CID_ANY, port);
-        socket::bind(fd, &addr)?;
-        socket::listen(fd, 128)?;
+        // Bind and Listen using nix
+        // Note: For Vsock, we use VsockAddr, but we must use it correctly with nix
+        use nix::sys::socket::sockaddr_vm;
+        let addr = sockaddr_vm::new(2, port); // VMADDR_CID_HOST
+        socket::bind(owned_fd.as_raw_fd(), &addr)?;
+        socket::listen(owned_fd.as_raw_fd(), 128)?;
 
-        Ok(Self { fd })
+        Ok(Self { async_fd: AsyncFd::new(owned_fd)? })
     }
 
-    pub async fn accept(&self) -> Result<i32, Box<dyn std::error::Error>> {
+    pub async fn accept(&self) -> Result<std::os::unix::io::OwnedFd, Box<dyn std::error::Error>> {
         loop {
-            match socket::accept(self.fd) {
-                Ok(client_fd) => return Ok(client_fd),
+            let mut guard = self.async_fd.readable().await?;
+            match socket::accept(guard.get_ref().as_raw_fd()) {
+                Ok(fd) => return Ok(unsafe { std::os::unix::io::OwnedFd::from_raw_fd(fd) }),
                 Err(e) if e == nix::errno::Errno::EAGAIN => {
-                    tokio::task::yield_now().await;
+                    guard.clear_ready();
                     continue;
                 }
                 Err(e) => return Err(e.into()),
@@ -40,33 +43,35 @@ impl VsockListener {
     }
 }
 
-pub async fn handle_agent(fd: i32) -> Result<(), Box<dyn std::error::Error>> {
-    let mut file = unsafe { std::fs::File::from_raw_fd(fd) };
+pub async fn handle_agent(owned_fd: std::os::unix::io::OwnedFd) -> Result<(), Box<dyn std::error::Error>> {
+    let mut async_fd = AsyncFd::new(owned_fd)?;
     let mut header_buf = [0u8; std::mem::size_of::<VsockPacketHeader>()];
     
     loop {
-        // 1. Read Header
-        if let Err(e) = file.read_exact(&mut header_buf).await {
-            if e.kind() == std::io::ErrorKind::UnexpectedEof { break; }
-            return Err(e.into());
-        }
-
-        let header: VsockPacketHeader = unsafe { std::ptr::read(header_buf.as_ptr() as *const _) };
+        let mut guard = async_fd.readable().await?;
         
-        // 2. Read Payload
-        let mut payload = vec![0u8; header.payload_len as usize];
-        file.read_exact(&mut payload).await?;
+        // Non-blocking read for header
+        let mut reader = &*guard.get_ref();
+        use std::io::Read;
+        
+        match reader.read_exact(&mut header_buf) {
+            Ok(_) => {
+                let header: VsockPacketHeader = unsafe { std::ptr::read(header_buf.as_ptr() as *const _) };
+                let mut payload = vec![0u8; header.payload_len as usize];
+                reader.read_exact(&mut payload)?;
 
-        // 3. Logic based on MessageType
-        match header.msg_type {
-            0x10 => { // RpcRequest
-                println!("V-Hub: Received RpcRequest: {}", String::from_utf8_lossy(&payload));
-                // Reply would go here...
+                match header.msg_type {
+                    0x10 => println!("V-Hub: Received RpcRequest: {}", String::from_utf8_lossy(&payload)),
+                    0x30 => print!("[Guest Stdout] {}", String::from_utf8_lossy(&payload)),
+                    _ => println!("Unhandled message type: {}", header.msg_type),
+                }
             },
-            0x30 => { // Stdout
-                print!("[Guest Stdout] {}", String::from_utf8_lossy(&payload));
+            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                guard.clear_ready();
+                continue;
             },
-            _ => println!("Unhandled message type: {}", header.msg_type),
+            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
+            Err(e) => return Err(e.into()),
         }
     }
     Ok(())
