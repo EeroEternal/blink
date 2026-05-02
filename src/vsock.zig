@@ -156,6 +156,7 @@ pub const VsockDispatcher = struct {
                 defer self.allocator.free(response);
                 _ = try posix.write(fd, response);
             },
+            .RpcRequest => {
                 // Print purely the JSON payload to stdout so the calling Python SDK can parse it
                 const stdout = std.io.getStdOut();
                 try stdout.writer().print("{s}\n", .{payload});
