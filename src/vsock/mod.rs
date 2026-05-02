@@ -1,4 +1,4 @@
-use nix::sys::socket::{self, SockFlag, SockType, SockProtocol};
+use nix::sys::socket::{self, SockFlag, SockType};
 use tokio::io::AsyncReadExt;
 use std::os::fd::{FromRawFd, AsRawFd, OwnedFd, IntoRawFd};
 use crate::protocol::{VsockPacketHeader, MessageType, BLINK_MAGIC};
@@ -8,7 +8,6 @@ pub struct VsockListener {
 }
 
 impl VsockListener {
-    pub fn bind(port: u32) -> Result<Self, Box<dyn std::error::Error>> {
     pub fn bind(port: u32) -> Result<Self, Box<dyn std::error::Error>> {
         let fd = unsafe {
             libc::socket(
