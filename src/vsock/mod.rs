@@ -10,22 +10,23 @@ pub struct VsockListener {
 impl VsockListener {
     pub fn bind(port: u32) -> Result<Self, Box<dyn std::error::Error>> {
         let fd = socket::socket(
-            nix::sys::socket::AddressFamily::Vsock,
-            SockType::Stream,
-            SockProtocol::from(0),
-            SockFlag::SOCK_NONBLOCK,
-        )?;
-        
-        let owned_fd = unsafe { OwnedFd::from_raw_fd(fd) };
+            let fd = socket::socket(
+                AddressFamily::Vsock,
+                SockType::Stream,
+                None,
+                SockFlag::SOCK_NONBLOCK,
+            )?;
 
-        // Use raw libc for vsock bind
-        let addr = libc::sockaddr_vm {
-            svm_family: libc::AF_VSOCK as u16,
-            svm_reserved1: 0,
-            svm_port: port,
-            svm_cid: libc::VMADDR_CID_ANY,
-            svm_zero: [0; 4],
-        };
+            let owned_fd = unsafe { OwnedFd::from_raw_fd(fd) };
+
+            // Use raw libc for vsock bind
+            let addr = libc::sockaddr_vm {
+                svm_family: libc::AF_VSOCK as u16,
+                svm_reserved1: 0,
+                svm_port: port,
+                svm_cid: libc::VMADDR_CID_ANY,
+                svm_zero: [0; 4],
+            };
 
         let res = unsafe {
             libc::bind(
