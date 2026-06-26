@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Blink Sandbox API</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <main class="page">
+    <div class="mark" aria-hidden="true">
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none">
+        <rect x="4" y="6" width="16" height="14" rx="2" stroke="white" stroke-width="1.5"/>
+        <path d="M8 6V5a2 2 0 012-2h4a2 2 0 012 2v1" stroke="white" stroke-width="1.5" stroke-linecap="round"/>
+        <circle cx="12" cy="13" r="2" fill="white" fill-opacity="0.9"/>
+      </svg>
+    </div>
+    <h1>Blink</h1>
+    <p class="tagline">Agent 隔离沙箱执行面 · 供 XEnsemble 等控制面调用</p>
+    <div id="status" class="status">检查中…</div>
+    <section class="card">
+      <h2>定位</h2>
+      <p>Blink 不是用户控制台。用户登录、配额、Agent 管理由 <strong>XEnsemble 控制面</strong>负责；Blink 只提供 libkrun VM 沙箱的生命周期与执行 API。</p>
+    </section>
+    <section class="card">
+      <h2>集成文档</h2>
+      <p>控制面开发者请参阅仓库内 <code>docs/XENSEMBLE.md</code>，了解 Runtime Provider 与 Blink API 的映射关系。</p>
+    </section>
+    <section class="card">
+      <h2>API</h2>
+      <ul>
+        <li><code>GET /api/health</code></li>
+        <li><code>GET /api/product</code></li>
+        <li><code>POST /api/runs</code> — 单次执行</li>
+        <li><code>GET/POST /api/sessions</code> — 持久 Session</li>
+        <li><code>POST /api/sessions/{name}/checkpoints</code> — Snapshot</li>
+      </ul>
+      <p class="hint">无 API 鉴权 · 默认 <code>127.0.0.1:8787</code> · 鉴权由 XEnsemble 控制面负责</p>
+    </section>
+  </main>
+  <script>
+    fetch("/api/health")
+      .then((r) => r.json())
+      .then((d) => {
+        document.getElementById("status").textContent = `${d.service} · ${d.status} · ${d.role}`;
+        document.getElementById("status").className = "status ok";
+      })
+      .catch(() => {
+        document.getElementById("status").textContent = "API 离线";
+        document.getElementById("status").className = "status err";
+      });
+  </script>
+</body>
+</html>

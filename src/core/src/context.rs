@@ -1,0 +1,191 @@
+//! Shared BoxLite runtime for long-lived server processes.
+
+use std::path::{Path, PathBuf};
+
+use anyhow::{Context, Result, bail};
+use boxlite::{
+    BoxCommand, BoxliteRuntime, LiteBox, SnapshotInfo,
+    runtime::options::{
+        BoxArchive, BoxOptions, BoxliteOptions, ExportOptions, NetworkSpec, RootfsSpec,
+        SnapshotOptions,
+    },
+};
+use tracing::info;
+
+use crate::exec::exec_agent_script;
+use crate::runner::run_agent_script;
+use crate::AgentResult;
+use blink_shared::AGENT_MEMORY_DIR;
+
+#[derive(Clone)]
+pub struct BlinkContext {
+    runtime: BoxliteRuntime,
+    export_dir: PathBuf,
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct SessionInfo {
+    pub name: Option<String>,
+    pub box_id: String,
+    pub status: String,
+    pub running: bool,
+}
+
+impl BlinkContext {
+    pub fn new() -> Result<Self> {
+        let home = dirs::home_dir().context("could not resolve home directory")?;
+        let export_dir = home.join(".blink").join("exports");
+        std::fs::create_dir_all(&export_dir).context("failed to create export directory")?;
+        Ok(Self {
+            runtime: BoxliteRuntime::new(BoxliteOptions::default())
+                .context("failed to initialize BoxLite runtime")?,
+            export_dir,
+        })
+    }
+
+    pub fn export_dir(&self) -> &Path {
+        &self.export_dir
+    }
+
+    fn session_options(image: &str, warm: bool) -> BoxOptions {
+        BoxOptions {
+            rootfs: RootfsSpec::Image(image.to_string()),
+            network: NetworkSpec::Disabled,
+            auto_remove: false,
+            detach: warm,
+            ..Default::default()
+        }
+    }
+
+    async fn get_box(&self, name: &str) -> Result<LiteBox> {
+        self.runtime
+            .get(name)
+            .await
+            .context("failed to lookup session")?
+            .with_context(|| format!("session '{name}' not found"))
+    }
+
+    pub async fn list_sessions(&self) -> Result<Vec<SessionInfo>> {
+        let infos = self.runtime.list_info().await.context("list sessions")?;
+        Ok(infos
+            .into_iter()
+            .map(|b| SessionInfo {
+                name: b.name,
+                box_id: b.id.to_string(),
+                status: format!("{:?}", b.status),
+                running: b.pid.is_some(),
+            })
+            .collect())
+    }
+
+    pub async fn open_session(&self, name: &str, image: &str, warm: bool) -> Result<(String, bool)> {
+        info!(name, image, warm, "opening session");
+        let (litebox, created) = self
+            .runtime
+            .get_or_create(
+                Self::session_options(image, warm),
+                Some(name.to_string()),
+            )
+            .await
+            .context("open session")?;
+        ensure_memory_dir(&litebox).await?;
+        Ok((litebox.id().as_str().to_string(), created))
+    }
+
+    pub async fn run_agent_ephemeral(
+        &self,
+        script_path: &Path,
+        image: Option<&str>,
+    ) -> Result<AgentResult> {
+        run_agent_script(
+            script_path,
+            image.unwrap_or(blink_shared::DEFAULT_ROOTFS_IMAGE),
+        )
+        .await
+    }
+
+    pub async fn run_in_session(&self, name: &str, script_path: &Path) -> Result<AgentResult> {
+        let litebox = self.get_box(name).await?;
+        exec_agent_script(&litebox, script_path).await
+    }
+
+    pub async fn spawn_in_session(&self, name: &str, spec: crate::SpawnSpec) -> Result<crate::Execution> {
+        let litebox = self.get_box(name).await?;
+        crate::spawn_exec(&litebox, spec).await
+    }
+
+    pub async fn checkpoint_session(&self, name: &str, snapshot: &str) -> Result<SnapshotInfo> {
+        let litebox = self.get_box(name).await?;
+        litebox
+            .snapshots()
+            .create(SnapshotOptions::default(), snapshot)
+            .await
+            .context("checkpoint")
+    }
+
+    pub async fn restore_session(&self, name: &str, snapshot: &str) -> Result<()> {
+        let litebox = self.get_box(name).await?;
+        if litebox.info().status.is_active() {
+            litebox.stop().await.context("stop before restore")?;
+        }
+        litebox.snapshots().restore(snapshot).await.context("restore")
+    }
+
+    pub async fn list_checkpoints(&self, name: &str) -> Result<Vec<SnapshotInfo>> {
+        let litebox = self.get_box(name).await?;
+        litebox.snapshots().list().await.context("list checkpoints")
+    }
+
+    pub async fn stop_session(&self, name: &str) -> Result<()> {
+        let litebox = self.get_box(name).await?;
+        if litebox.info().status.is_active() {
+            litebox.stop().await.context("stop session")?;
+        }
+        Ok(())
+    }
+
+    pub async fn remove_session(&self, name: &str, force: bool) -> Result<()> {
+        self.runtime.remove(name, force).await.context("remove session")
+    }
+
+    pub async fn export_session(&self, name: &str) -> Result<PathBuf> {
+        let litebox = self.get_box(name).await?;
+        let stamp = chrono::Utc::now().format("%Y%m%d-%H%M%S");
+        let dest = self
+            .export_dir
+            .join(format!("{name}-{stamp}.boxlite"));
+        let archive = litebox
+            .export(ExportOptions::default(), &dest)
+            .await
+            .context("export session")?;
+        Ok(archive.path().to_path_buf())
+    }
+
+    pub async fn import_session(&self, archive_path: &Path, name: Option<&str>) -> Result<String> {
+        if !archive_path.exists() {
+            bail!("archive not found: {}", archive_path.display());
+        }
+        let archive = BoxArchive::new(archive_path);
+        let litebox = self
+            .runtime
+            .import_box(archive, name.map(String::from))
+            .await
+            .context("import session")?;
+        ensure_memory_dir(&litebox).await?;
+        Ok(litebox.id().as_str().to_string())
+    }
+}
+
+async fn ensure_memory_dir(litebox: &LiteBox) -> Result<()> {
+    let execution = litebox
+        .exec(BoxCommand::new("sh").arg("-c").arg(format!(
+            "mkdir -p {AGENT_MEMORY_DIR}"
+        )))
+        .await
+        .context("mkdir memory dir")?;
+    let status = execution.wait().await.context("mkdir wait")?;
+    if status.exit_code != 0 {
+        bail!("mkdir {AGENT_MEMORY_DIR} failed");
+    }
+    Ok(())
+}

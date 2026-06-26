@@ -1,0 +1,16 @@
+[package]
+name = "blink-shared"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Shared Blink protocol types and constants"
+readme = "../../README.md"
+keywords = ["sandbox", "blink", "boxlite"]
+categories = ["virtualization"]
+
+[dependencies]
+serde = { workspace = true }

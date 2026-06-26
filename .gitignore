@@ -1,8 +1,10 @@
-.zig-cache/
-zig-out/
 target/
 *.o
 *.a
 *.so
 *.dylib
 __pycache__/
+.blink/
+.boxlite/
+.zig-cache/
+zig-out/
