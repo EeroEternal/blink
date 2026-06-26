@@ -167,7 +167,7 @@ ws.onopen = () => {
 
 ## V-Hub（vsock，次要路径）
 
-V-Hub 协议已预留 PTY 相关消息类型（见 [COMMUNICATION_ARCH.md](COMMUNICATION_ARCH.md)）：
+V-Hub 协议已预留 PTY 相关消息类型（见 [VHUB.md](VHUB.md)）：
 
 - `StreamData (0x20)` — 原始 PTY 字节流
 - `TtyResize (0x21)` — JSON `{"rows":N,"cols":N}`
@@ -178,6 +178,6 @@ V-Hub 协议已预留 PTY 相关消息类型（见 [COMMUNICATION_ARCH.md](COMMU
 
 ## 相关文档
 
-- [OUTPUT_STREAMING.md](OUTPUT_STREAMING.md) — 双轨输出架构总览
+- [STREAMING.md](STREAMING.md) — 双轨输出架构总览
 - [XENSEMBLE.md](XENSEMBLE.md) — 控制面 API 映射
 - [PRODUCT.md](PRODUCT.md) — 产品层级与能力边界

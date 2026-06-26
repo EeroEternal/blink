@@ -2,16 +2,39 @@
 
 Blink rents **hardware-isolated sandboxes for AI agents** — built on [BoxLite](https://github.com/boxlite-ai/boxlite)'s libkrun VM core.
 
-**Product summary:** Ephemeral one-shot runs are for try/debug (free tier). Paid tier covers **persistent sessions, snapshots, export/import, and warm sessions**. Users bring their own Agent and API keys (BYOK). See **[docs/PRODUCT.md](docs/PRODUCT.md)** for the full product definition.
+**Product:** Ephemeral one-shot runs for try/debug (free tier). Paid tier covers **persistent sessions, snapshots, export/import, and warm sessions**. Users bring their own Agent and API keys (BYOK). Full definition → **[docs/PRODUCT.md](docs/PRODUCT.md)**
 
-**Architecture role:** Blink is the **execution plane**. User login, quotas, and Agent consoles live in the **control plane** (e.g. [XEnsemble](https://github.com/EeroEternal/XEnsemble)). See **[docs/XENSEMBLE.md](docs/XENSEMBLE.md)** for integration.
+**Role:** Blink is the **execution plane**. User login, quotas, and Agent consoles live in the **control plane** (e.g. [XEnsemble](https://github.com/EeroEternal/XEnsemble)). Integration contract → **[docs/XENSEMBLE.md](docs/XENSEMBLE.md)**
+
+## Documentation
+
+| Topic | Doc |
+|-------|-----|
+| Product definition, free vs paid, BYOK | [docs/PRODUCT.md](docs/PRODUCT.md) |
+| Control-plane integration (XEnsemble) | [docs/XENSEMBLE.md](docs/XENSEMBLE.md) |
+| Dual-track output (pipe vs PTY) | [docs/STREAMING.md](docs/STREAMING.md) |
+| Interactive terminal (spawn + WebSocket) | [docs/PTY.md](docs/PTY.md) |
+| V-Hub vsock / BLIN protocol | [docs/VHUB.md](docs/VHUB.md) |
 
 ## Architecture
 
-- **blink-sdk**: Rust library for agent execution via BoxLite `LiteBox` + BLIN V-Hub protocol ([crates.io](https://crates.io/crates/blink-sdk))
-- **blink-cli**: Host CLI (`run`, `session`, `serve`)
-- **blink-server**: Sandbox REST API for control-plane consumers (`:8787`)
-- **V-Hub**: 20-byte BLIN header over vsock port `10000` (see `docs/COMMUNICATION_ARCH.md`)
+Blink is **library + service + CLI**, not a single binary:
+
+| Component | Type | Integrators |
+|-----------|------|-------------|
+| **blink-sdk** | Rust library — BoxLite `LiteBox` + BLIN V-Hub ([crates.io](https://crates.io/crates/blink-sdk)) | Rust apps embed directly |
+| **blink-server** | HTTP process (`:8787`) — thin REST wrapper over `blink-sdk` | Control planes call via HTTP ([XENSEMBLE.md](docs/XENSEMBLE.md)) |
+| **blink-cli** | Host CLI (`run`, `session`, `serve`) | Local dev and ops |
+
+**Control-plane integration:** run `blink-server` as a sidecar; the control plane's Runtime Provider calls REST — no Rust linking required. See **[docs/XENSEMBLE.md](docs/XENSEMBLE.md)**.
+
+**Execution modes** (see [STREAMING.md](docs/STREAMING.md)):
+
+| Mode | Use case | Entry |
+|------|----------|-------|
+| **Pipe** | AI Agent short tasks, structured JSON | `run`, `POST /api/runs`, `POST /api/sessions/{name}/runs` |
+| **PTY** | Shell, TUI, interactive terminal | `session spawn --tty`, `POST .../spawn` + WebSocket attach ([PTY.md](docs/PTY.md)) |
+| **V-Hub** | Optional vsock RPC / stream relay | `blink-cli serve --socket <path>` ([VHUB.md](docs/VHUB.md)) |
 
 ## Prerequisites
 
@@ -44,9 +67,14 @@ Binaries: `target/debug/blink-cli`, `target/debug/blink-server`
 ./target/debug/blink-cli session export --name my-agent
 ./target/debug/blink-cli session import archive.boxlite --name my-agent
 
-# V-Hub (vsock bridge wiring)
+# PTY: interactive shell in session (see docs/PTY.md)
+./target/debug/blink-cli session spawn --name my-agent --tty -- sh -i
+
+# V-Hub (vsock bridge wiring — see docs/VHUB.md)
 ./target/debug/blink-cli serve --socket /tmp/blink-vhub.sock
 ```
+
+Agent memory persists under `/var/blink/memory/` on the session disk. Details → [docs/PRODUCT.md](docs/PRODUCT.md)
 
 ### Rust SDK
 
@@ -72,22 +100,17 @@ async fn main() -> anyhow::Result<()> {
 
 ## Sandbox API (for control planes)
 
-```bash
-PATH="/opt/homebrew/opt/llvm/bin:$PATH" cargo run -p blink-server
-# http://127.0.0.1:8787 — service status page + REST API
-```
-
-XEnsemble integration: **[docs/XENSEMBLE.md](docs/XENSEMBLE.md)**
-
-Blink **不做 API 鉴权**。用户身份与配额由控制面（XEnsemble）负责；Blink 默认只监听 `127.0.0.1`，生产环境通过内网或 sidecar 暴露：
+控制面（如 XEnsemble）通过 HTTP 调用 **`blink-server`**，不链接 Rust lib。完整集成与 sidecar 部署 → **[docs/XENSEMBLE.md](docs/XENSEMBLE.md)**。
 
 ```bash
-# 默认 localhost:8787
-cargo run -p blink-server
-
-# 内网暴露（需确保网络隔离）
-BLINK_BIND=0.0.0.0 cargo run -p blink-server -- --port 8787
+cargo build --release -p blink-server
+./target/release/blink-server          # 默认 http://127.0.0.1:8787
+curl -sf http://127.0.0.1:8787/api/health
 ```
+
+Blink **不做 API 鉴权**。用户身份与配额由控制面负责；默认只监听 `127.0.0.1`，生产环境同机 sidecar 或内网暴露（`BLINK_BIND=0.0.0.0` 时需网络隔离）。
+
+Blink 仓库内快速迭代可用 `cargo run -p blink-server`；对接控制面时请用 release 二进制，见 [XENSEMBLE.md](docs/XENSEMBLE.md)。
 
 ### REST endpoints
 
@@ -99,7 +122,10 @@ BLINK_BIND=0.0.0.0 cargo run -p blink-server -- --port 8787
 | GET | `/api/runs/{id}` | Poll run status |
 | GET | `/api/sessions` | List sessions |
 | POST | `/api/sessions` | Open session (`{name, warm?}`) |
-| POST | `/api/sessions/{name}/runs` | Run agent binary in session (`script` = host path) |
+| GET | `/api/sessions/{name}` | Session info |
+| POST | `/api/sessions/{name}/runs` | Run agent in session — pipe mode ([STREAMING.md](docs/STREAMING.md)) |
+| POST | `/api/sessions/{name}/spawn` | Spawn process — PTY or pipe ([PTY.md](docs/PTY.md)) |
+| WS | `/api/sessions/{name}/executions/{id}/attach` | WebSocket attach for spawn ([PTY.md](docs/PTY.md)) |
 | POST | `/api/sessions/{name}/checkpoints` | Create snapshot |
 | GET | `/api/sessions/{name}/checkpoints` | List snapshots |
 | POST | `/api/sessions/{name}/checkpoints/{snap}/restore` | Restore snapshot |

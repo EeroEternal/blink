@@ -1,5 +1,19 @@
 # AGENTS.md
 
+## Documentation
+
+`docs/` 下文档文件名使用 **单个英文词**（UPPERCASE），便于引用与检索：
+
+| 文件 | 主题 |
+|------|------|
+| [PRODUCT.md](docs/PRODUCT.md) | 产品定义、免费/付费、BYOK |
+| [XENSEMBLE.md](docs/XENSEMBLE.md) | 控制面集成契约 |
+| [STREAMING.md](docs/STREAMING.md) | Pipe / PTY 双轨 I/O |
+| [PTY.md](docs/PTY.md) | 交互式终端（spawn + WebSocket） |
+| [VHUB.md](docs/VHUB.md) | V-Hub vsock / BLIN 协议 |
+
+新增文档请延续此命名；专有名词（如 `XENSEMBLE`）可保留。
+
 ## Product
 
 Blink rents isolated sandboxes for user-owned agents. **Ephemeral `run` = one-shot (free tier). Session + snapshot + export/import = paid persistence.** Details: [docs/PRODUCT.md](docs/PRODUCT.md).
@@ -8,7 +22,9 @@ Blink rents isolated sandboxes for user-owned agents. **Ephemeral `run` = one-sh
 
 ## 1. Goal
 
-Agents in the Blink ecosystem are untrusted, dynamically generated, or ephemeral programs executing within a hardware-isolated libkrun VM sandbox provided by BoxLite. Integrators use the **`blink-sdk`** Rust crate (crates.io) or `blink-server` REST API.
+Agents in the Blink ecosystem are untrusted, dynamically generated, or ephemeral programs executing within a hardware-isolated libkrun VM sandbox provided by BoxLite.
+
+**Integrator paths:** Core logic lives in **`blink-sdk`** (Rust library, crates.io). **`blink-server`** is an HTTP sidecar over that library; **`blink-cli`** is for local dev. Control planes such as XEnsemble call **`blink-server` REST** — they do not link `blink-sdk`. Rust-only integrators may depend on `blink-sdk` directly. See [docs/XENSEMBLE.md](docs/XENSEMBLE.md).
 
 ## 2. Basic Specifications
 
@@ -27,19 +43,11 @@ Agents in the Blink ecosystem are untrusted, dynamically generated, or ephemeral
 4. Agent may report results as JSON (`execution_result` event) on stdout; otherwise Blink returns raw stdout/stderr/exit_code.
 5. Blink returns structured JSON to the caller (stdout/stderr/exit_code).
 
-### Communication (V-Hub)
+### I/O paths
 
-For streaming and RPC, agents may connect over `AF_VSOCK` to port `10000` (CID `2`) using the BLIN 20-byte header protocol. Use `blink-cli serve --socket <path>` on the host and wire the socket via libkrun's vsock bridge. XEnsemble `BoxLiteExecAdapter.spawn` should bridge this for interactive terminals.
-
-#### Vsock Payload Protocol
-
-- `<I` (4 bytes): Magic `0x424C494E` (`BLIN`)
-- `B` (1 byte): Version (`1`)
-- `B` (1 byte): MessageType (`0x01` Handshake, `0x10` RpcRequest, etc.)
-- `H` (2 bytes): Flags (`0`)
-- `I` (4 bytes): Payload Length
-- `Q` (8 bytes): Request ID
-- Payload: Arbitrary length (usually JSON for RPC)
+- **Pipe（默认）：** Agent 短任务，BoxLite exec，可选 `execution_result` JSON — [docs/STREAMING.md](docs/STREAMING.md)
+- **PTY（交互式）：** spawn + WebSocket attach — [docs/PTY.md](docs/PTY.md)；XEnsemble 终端 UI 走此路径
+- **V-Hub（可选）：** Guest vsock RPC / 流中继，BLIN 协议 — [docs/VHUB.md](docs/VHUB.md)；`blink-cli serve --socket <path>`
 
 ### Persistent Sessions (long-running agents)
 

@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "Blink web API and console for sandbox run requests"
+description = "Blink sandbox REST API for control-plane consumers"
 
 [[bin]]
 name = "blink-server"
