@@ -1,5 +1,5 @@
 [package]
-name = "blink-shared"
+name = "blinkvm-shared"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -11,6 +11,10 @@ description = "Shared Blink protocol types and constants"
 readme = "../../README.md"
 keywords = ["sandbox", "blink", "boxlite"]
 categories = ["virtualization"]
+
+[lib]
+name = "blink_shared"
+path = "src/lib.rs"
 
 [dependencies]
 serde = { workspace = true }

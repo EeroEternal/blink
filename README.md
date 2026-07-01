@@ -22,7 +22,7 @@ Blink is **library + service + CLI**, not a single binary:
 
 | Component | Type | Integrators |
 |-----------|------|-------------|
-| **blink-sdk** | Rust library — BoxLite `LiteBox` + BLIN V-Hub ([crates.io](https://crates.io/crates/blink-sdk)) | Rust apps embed directly |
+| **blink-sdk** (crate `blinkvm-sdk`) | Rust library — BoxLite `LiteBox` + BLIN V-Hub ([crates.io](https://crates.io/crates/blinkvm-sdk)) | Rust apps embed directly |
 | **blink-server** | HTTP process (`:8787`) — thin REST wrapper over `blink-sdk` | Control planes call via HTTP ([XENSEMBLE.md](docs/XENSEMBLE.md)) |
 | **blink-cli** | Host CLI (`run`, `session`, `serve`) | Local dev and ops |
 
@@ -81,7 +81,7 @@ Agent memory persists under `/var/blink/memory/` on the session disk. Details �
 Add to `Cargo.toml`:
 
 ```toml
-blink-sdk = "0.2"
+blinkvm-sdk = "0.3"
 ```
 
 ```rust
@@ -151,8 +151,8 @@ The image binds `0.0.0.0:8787` by default. No crates.io patch, local BoxLite che
 
 ```bash
 # Publish shared types first, then the SDK
-cargo publish -p blink-shared
-cargo publish -p blink-sdk
+cargo publish -p blinkvm-shared
+cargo publish -p blinkvm-sdk
 ```
 
 CI publishes both crates on git tags matching `v*` (see `.github/workflows/publish.yml`).

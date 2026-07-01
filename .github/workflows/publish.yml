@@ -16,12 +16,12 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Publish blink-shared
-        run: cargo publish -p blink-shared
+      - name: Publish blinkvm-shared
+        run: cargo publish -p blinkvm-shared
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
-      - name: Publish blink-sdk
-        run: cargo publish -p blink-sdk
+      - name: Publish blinkvm-sdk
+        run: cargo publish -p blinkvm-sdk
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}

@@ -334,11 +334,11 @@ checksum = "b4388bee8683e3d04af747c73422af53102d2bd24d9eadb6cbc100baef4b43f8"
 
 [[package]]
 name = "blink-cli"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "anyhow",
- "blink-sdk",
- "blink-shared",
+ "blinkvm-sdk",
+ "blinkvm-shared",
  "clap",
  "futures",
  "serde_json",
@@ -349,30 +349,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "blink-sdk"
-version = "0.3.1"
-dependencies = [
- "anyhow",
- "blink-shared",
- "boxlite",
- "chrono",
- "dirs",
- "futures",
- "serde",
- "serde_json",
- "thiserror 1.0.69",
- "tokio",
- "tracing",
-]
-
-[[package]]
 name = "blink-server"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "anyhow",
  "axum 0.8.9",
- "blink-sdk",
- "blink-shared",
+ "blinkvm-sdk",
+ "blinkvm-shared",
  "chrono",
  "clap",
  "futures",
@@ -387,8 +370,25 @@ dependencies = [
 ]
 
 [[package]]
-name = "blink-shared"
-version = "0.3.1"
+name = "blinkvm-sdk"
+version = "0.3.2"
+dependencies = [
+ "anyhow",
+ "blinkvm-shared",
+ "boxlite",
+ "chrono",
+ "dirs",
+ "futures",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "blinkvm-shared"
+version = "0.3.2"
 dependencies = [
  "serde",
 ]
