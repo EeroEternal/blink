@@ -47,12 +47,12 @@ impl BlinkContext {
         &self.export_dir
     }
 
-    fn session_options(image: &str, warm: bool) -> BoxOptions {
+    fn session_options(image: &str) -> BoxOptions {
         BoxOptions {
             rootfs: RootfsSpec::Image(image.to_string()),
             network: NetworkSpec::Disabled,
             auto_remove: false,
-            detach: warm,
+            detach: true,
             ..Default::default()
         }
     }
@@ -83,7 +83,7 @@ impl BlinkContext {
         let (litebox, created) = self
             .runtime
             .get_or_create(
-                Self::session_options(image, warm),
+                Self::session_options(image),
                 Some(name.to_string()),
             )
             .await
