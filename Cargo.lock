@@ -334,7 +334,7 @@ checksum = "b4388bee8683e3d04af747c73422af53102d2bd24d9eadb6cbc100baef4b43f8"
 
 [[package]]
 name = "blink-cli"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "anyhow",
  "blink-sdk",
@@ -350,7 +350,7 @@ dependencies = [
 
 [[package]]
 name = "blink-sdk"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "anyhow",
  "blink-shared",
@@ -367,7 +367,7 @@ dependencies = [
 
 [[package]]
 name = "blink-server"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "anyhow",
  "axum 0.8.9",
@@ -388,7 +388,7 @@ dependencies = [
 
 [[package]]
 name = "blink-shared"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "serde",
 ]
