@@ -414,6 +414,7 @@ dependencies = [
  "base64 0.22.1",
  "bincode 2.0.1",
  "boxlite-shared",
+ "bubblewrap-sys",
  "caps",
  "cc",
  "chrono",
@@ -485,6 +486,15 @@ dependencies = [
  "tokio",
  "tonic",
  "tonic-build",
+]
+
+[[package]]
+name = "bubblewrap-sys"
+version = "0.9.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e6d068b3d2e4b5e67b27f922401578a8fae1e821f784441be0ffc5764dd11d1c"
+dependencies = [
+ "num_cpus",
 ]
 
 [[package]]
