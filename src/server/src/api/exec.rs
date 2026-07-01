@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path as AxPath, State};
@@ -127,6 +128,7 @@ async fn run_ws_attach(
     let mut stdin_tx = Some(stdin_tx);
     let mut done = done;
     let mut exit_code: Option<i32> = None;
+    let mut output_closed = false;
 
     loop {
         tokio::select! {
@@ -137,7 +139,10 @@ async fn run_ws_attach(
                             break;
                         }
                     }
-                    None => break,
+                    None => {
+                        output_closed = true;
+                        break;
+                    }
                 }
             }
             msg = ws_stream.next() => {
@@ -176,6 +181,12 @@ async fn run_ws_attach(
                 }
                 break;
             }
+        }
+    }
+
+    if exit_code.is_none() && output_closed {
+        if let Ok(Ok(Ok(status))) = tokio::time::timeout(Duration::from_secs(5), &mut done).await {
+            exit_code = Some(status.exit_code);
         }
     }
 
