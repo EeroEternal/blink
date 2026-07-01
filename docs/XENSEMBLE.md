@@ -1,136 +1,136 @@
-# Blink × XEnsemble 集成
+# Blink × XEnsemble Integration
 
-Blink 是 **执行面（Execution Plane）**：提供硬件隔离的 libkrun VM 沙箱。  
-XEnsemble 是 **控制面（Control Plane）**：用户登录、配额、Agent/Session 编排、Desktop/Web UI。
+Blink is the **Execution Plane**: provides hardware-isolated libkrun VM sandboxes.  
+XEnsemble is the **Control Plane**: user login, quotas, Agent/Session orchestration, Desktop/Web UI.
 
-**Desktop / Web 客户端不直接调用 Blink。** 只有 XEnsemble Server 的 `BoxLiteRuntimeProvider`（及对应 Adapter）通过服务密钥调用 Blink API。
+**Desktop / Web clients do not call Blink directly.** Only XEnsemble Server's `BoxLiteRuntimeProvider` (and corresponding Adapters) call the Blink API using service credentials.
 
 ---
 
-## 架构
+## Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────┐
 │  XEnsemble Desktop / Web Admin                          │
-│  （用户登录、Agent 管理、终端、预览）                      │
+│  (user login, Agent management, terminal, preview)      │
 └───────────────────────────┬─────────────────────────────┘
                             │ HTTPS / WSS
                             ▼
 ┌─────────────────────────────────────────────────────────┐
-│  XEnsemble Server（控制面）                               │
+│  XEnsemble Server (Control Plane)                       │
 │  Auth · Quota · SessionManager · DeploymentService      │
 │  BoxLiteRuntimeProvider / ExecAdapter / FsAdapter       │
 └───────────────────────────┬─────────────────────────────┘
-                            │ HTTP（内网 / localhost）
+                            │ HTTP (intranet / localhost)
                             ▼
 ┌─────────────────────────────────────────────────────────┐
-│  blink-server（执行面）                                   │
+│  blink-server (Execution Plane)                         │
 │  libkrun VM · Session · Snapshot · Export/Import        │
 └─────────────────────────────────────────────────────────┘
 ```
 
-对齐 XEnsemble [`docs/Architecture.md`](https://github.com/EeroEternal/XEnsemble/blob/main/docs/Architecture.md) §5.4.2 BoxLite Managed Sandbox Runtime。
+Aligns with XEnsemble [`docs/Architecture.md`](https://github.com/EeroEternal/XEnsemble/blob/main/docs/Architecture.md) §5.4.2 BoxLite Managed Sandbox Runtime.
 
 ---
 
-## Blink 组件与集成方式
+## Blink Components and Integration
 
-Blink 仓库不是单一可执行文件，而是 **库 + 服务 + CLI** 三层：
+The Blink repository is not a single executable, but a **library + service + CLI** three-layer structure:
 
-| 组件 | 形态 | 面向谁 | 说明 |
-|------|------|--------|------|
-| **`blink-sdk`**（`src/core`，crate `blinkvm-sdk`） | Rust **library**（[crates.io](https://crates.io/crates/blinkvm-sdk)） | Rust 集成方 | 沙箱执行、Session、Snapshot 等核心能力 |
-| **`blink-server`** | 独立 **进程**（REST `:8787`） | 控制面（含 XEnsemble） | HTTP 薄封装，内部调用 `blink-sdk` |
-| **`blink-cli`** | 命令行工具 | 本地开发 / 运维 | 同上，不经 HTTP |
+| Component | Form | Audience | Description |
+|-----------|------|----------|-------------|
+| **`blink-sdk`** (crate `blinkvm-sdk`) | Rust **library** ([crates.io](https://crates.io/crates/blinkvm-sdk)) | Rust integrators | Sandbox execution, Session, Snapshot and other core capabilities |
+| **`blink-server`** | Standalone **process** (REST `:8787`) | Control planes (incl. XEnsemble) | Thin HTTP wrapper, internally calls `blink-sdk` |
+| **`blink-cli`** | Command-line tool | Local development / ops | Same as above, without going through HTTP |
 
-**XEnsemble 的标准集成路径是 HTTP，不是 Rust lib 链接。**
+**XEnsemble's standard integration path is HTTP, not Rust lib linking.**
 
-XEnsemble Server 是 Node.js 控制面，应作为 **HTTP 客户端** 调用 `blink-server`（sidecar 或同机 `127.0.0.1:8787`），由 `BoxLiteRuntimeProvider` 映射 REST API。**不需要**、也**不建议**把 Blink 链进 XEnsemble 进程。
+XEnsemble Server is a Node.js control plane and should act as an **HTTP client** calling `blink-server` (sidecar or same-machine `127.0.0.1:8787`), with `BoxLiteRuntimeProvider` mapping the REST API. It is **neither necessary nor recommended** to link Blink into the XEnsemble process.
 
 ```
-XEnsemble (Node.js)  ──HTTP──▶  blink-server (进程)  ──▶  blink-sdk (库)  ──▶  BoxLite / libkrun
+XEnsemble (Node.js)  ──HTTP──▶  blink-server (process)  ──▶  blink-sdk (lib)  ──▶  BoxLite / libkrun
 ```
 
-这样设计的原因：
+Reasons for this design:
 
-- **语言无关**：控制面与执行面解耦，Rust VM 栈不嵌入 Node 进程
-- **安全边界**：Blink 默认只绑 localhost；VM / libkrun 隔离在独立进程
-- **职责清晰**：鉴权、配额在 XEnsemble；沙箱生命周期在 Blink
+- **Language agnostic**: control plane and execution plane are decoupled; the Rust VM stack is not embedded in the Node process
+- **Security boundary**: Blink binds to localhost by default; VM / libkrun isolation lives in a separate process
+- **Clear responsibilities**: authentication and quotas live in XEnsemble; sandbox lifecycle lives in Blink
 
-若控制面本身是 **Rust** 项目，可直接依赖 `blink-sdk` crate，无需经过 `blink-server`。XEnsemble 当前架构下仍推荐 **进程 + REST** 模式。
-
----
-
-## 职责边界
-
-| 层 | 负责 | 不负责 |
-|----|------|--------|
-| **XEnsemble** | 用户/Admin 认证、配额、审计、Agent 授权、LLM Gateway、Preview Gateway、Desktop 终端 | VM 创建、libkrun 细节、沙箱内进程 |
-| **Blink** | Ephemeral run、Session 磁盘、Snapshot、Export/Import、V-Hub vsock | 用户账号、Web 登录、Agent 业务协议、LLM Token |
+If the control plane itself is a **Rust** project, it can depend on the `blink-sdk` crate directly without going through `blink-server`. Under XEnsemble's current architecture, **process + REST** mode is still recommended.
 
 ---
 
-## Runtime Provider 映射
+## Responsibility Boundaries
 
-XEnsemble `server/src/runtime/BoxLite*.js` 应对 Blink REST API 做如下映射（实现时参考）：
+| Layer | Responsible | Not Responsible |
+|-------|-------------|-----------------|
+| **XEnsemble** | User/Admin authentication, quotas, auditing, Agent authorization, LLM Gateway, Preview Gateway, Desktop terminal | VM creation, libkrun details, processes inside the sandbox |
+| **Blink** | Ephemeral run, Session disk, Snapshot, Export/Import, V-Hub vsock | User accounts, Web login, Agent business protocol, LLM Token |
 
-| XEnsemble 接口 | Blink API | 说明 |
-|----------------|-----------|------|
-| `RuntimeProvider.ensureReady(project, opts)` | `POST /api/sessions` | `name` = `{userId}-{projectId}` 或 runtime 映射 id；`warm` 可选 |
-| `RuntimeProvider.destroy(runtimeRef)` | `DELETE /api/sessions/{name}` | 销毁沙箱 |
-| `RuntimeProvider.attachSession(...)` | WS `/api/sessions/{name}/executions/{id}/attach` | PTY 流式终端（需先 spawn，见 [PTY.md](PTY.md)） |
-| `ExecAdapter.exec(cmd, args, env)` | `POST /api/sessions/{name}/runs` | 短任务；或 ephemeral `POST /api/runs` |
-| `ExecAdapter.spawn(...)` | `POST /api/sessions/{name}/spawn` + WS `/executions/{id}/attach` | PTY 交互终端，协议与 BoxLite attach 兼容（见 [PTY.md](PTY.md)） |
-| Snapshot / checkpoint | `POST /api/sessions/{name}/checkpoints` | 对应 Deployment revision |
+---
+
+## Runtime Provider Mapping
+
+XEnsemble `server/src/runtime/BoxLite*.js` should map to Blink REST API as follows (reference during implementation):
+
+| XEnsemble Interface | Blink API | Description |
+|---------------------|-----------|-------------|
+| `RuntimeProvider.ensureReady(project, opts)` | `POST /api/sessions` | `name` = `{userId}-{projectId}` or runtime-mapped id; `warm` optional |
+| `RuntimeProvider.destroy(runtimeRef)` | `DELETE /api/sessions/{name}` | Destroy sandbox |
+| `RuntimeProvider.attachSession(...)` | WS `/api/sessions/{name}/executions/{id}/attach` | PTY streaming terminal (spawn first, see [PTY.md](PTY.md)) |
+| `ExecAdapter.exec(cmd, args, env)` | `POST /api/sessions/{name}/runs` | Short task; or ephemeral `POST /api/runs` |
+| `ExecAdapter.spawn(...)` | `POST /api/sessions/{name}/spawn` + WS `/executions/{id}/attach` | PTY interactive terminal, protocol compatible with BoxLite attach (see [PTY.md](PTY.md)) |
+| Snapshot / checkpoint | `POST /api/sessions/{name}/checkpoints` | Corresponds to Deployment revision |
 | Restore checkpoint | `POST /api/sessions/{name}/checkpoints/{snap}/restore` | |
 | Export / migrate | `POST /api/sessions/{name}/export` + `POST /api/import` | |
-| `FsAdapter.*` | （规划）沙箱内文件 API 或 virtiofs 代理 | 当前可通过 session 内 exec 间接操作 |
+| `FsAdapter.*` | (planned) sandbox file API or virtiofs proxy | Currently indirect via exec inside session |
 
-Session 命名建议：`{xensembleRuntimeId}`，由控制面维护 `runtimeId ↔ blinkSessionName` 映射表，**不向客户端暴露** Blink session 名或内部 box id。
+Session naming recommendation: `{xensembleRuntimeId}`. The control plane maintains a `runtimeId ↔ blinkSessionName` mapping table. **Do not expose** Blink session names or internal box ids to clients.
 
 ---
 
-## 安全边界
+## Security Boundary
 
-Blink **不做 API 鉴权**。信任模型：
+Blink **does not perform API authentication**. Trust model:
 
-- Blink 默认监听 `127.0.0.1:8787`（`BLINK_BIND` / `--bind`）
-- 生产环境：Blink 与 XEnsemble Server 同机或同私有网络，**不暴露公网**
-- 用户登录、配额、审计均在 XEnsemble 控制面完成，通过后才调用 Blink
+- Blink listens on `127.0.0.1:8787` by default (`BLINK_BIND` / `--bind`)
+- In production: Blink and XEnsemble Server run on the same machine or private network, **not exposed to the public internet**
+- User login, quotas, and auditing are completed in the XEnsemble control plane; only then is Blink called
 
-XEnsemble 侧配置（建议）：
+XEnsemble-side configuration (recommended):
 
 ```bash
 export BLINK_API_URL=http://127.0.0.1:8787
-export RUNTIME_PROVIDER=boxlite   # 加载 BoxLiteRuntimeProvider
+export RUNTIME_PROVIDER=boxlite   # load BoxLiteRuntimeProvider
 ```
 
-可选扩展（未实现）：请求头 `X-XEnsemble-User-Id` / `X-XEnsemble-Runtime-Id` 供 Blink 审计日志使用。
+Optional extension (not implemented): request header `X-XEnsemble-User-Id` / `X-XEnsemble-Runtime-Id` for Blink audit logs.
 
 ---
 
-## 产品层级映射
+## Product-Level Mapping
 
-| Blink 能力 | XEnsemble 场景 |
-|------------|----------------|
-| `POST /api/runs` (ephemeral) | 试用、一次性 tool-call、CI 探测 |
-| `POST /api/sessions` | 项目 workspace 持久环境 |
-| `POST /api/sessions/{name}/spawn` + WS attach | Desktop/Web 交互式终端 |
-| checkpoint / restore | Deployment revision、回滚 |
-| export / import | 环境迁移、备份 |
-| warm session | 减少 Agent 冷启动 |
+| Blink Capability | XEnsemble Scenario |
+|------------------|--------------------|
+| `POST /api/runs` (ephemeral) | Trial, one-off tool-call, CI probe |
+| `POST /api/sessions` | Project workspace persistent environment |
+| `POST /api/sessions/{name}/spawn` + WS attach | Desktop/Web interactive terminal |
+| checkpoint / restore | Deployment revision, rollback |
+| export / import | Environment migration, backup |
+| warm session | Reduce Agent cold start |
 
-XEnsemble `PolicyService` / quota 决定是否允许用户触发持久化能力；Blink 仅执行并返回容器级结果。
+XEnsemble `PolicyService` / quota decides whether a user may trigger persistence capabilities; Blink only executes and returns container-level results.
 
 ---
 
-## 部署
+## Deployment
 
-XEnsemble 只需一个 **长期运行的 `blink-server` HTTP 端点**（`BLINK_API_URL`）。集成方应使用 **release 二进制或 sidecar**，不要用 `cargo run`（那是 Blink 仓库本地开发用法，需 Rust 工具链且会触发编译）。
+XEnsemble only needs a **long-running `blink-server` HTTP endpoint** (`BLINK_API_URL`). Integrators should use a **release binary or sidecar**; do not use `cargo run` (that is Blink repo local development usage, requires a Rust toolchain and triggers compilation).
 
-### 1. 发布版部署（推荐）
+### 1. Release Deployment (Recommended)
 
-部署方应直接使用 Blink 发布物，不需要本地 BoxLite checkout、`[patch.crates-io]`，也不需要自己构建 libkrun。
+Deployers should use published Blink artifacts directly; no local BoxLite checkout, no `[patch.crates-io]`, and no need to build libkrun yourself.
 
 ```bash
 docker pull ghcr.io/eeroeternal/blink-server:vX.Y.Z
@@ -138,57 +138,57 @@ docker run --rm --device /dev/kvm -p 8787:8787 ghcr.io/eeroeternal/blink-server:
 curl -sf http://127.0.0.1:8787/api/health
 ```
 
-容器内 `blink-server` 默认绑定 `0.0.0.0:8787`。XEnsemble 只需把 `BLINK_API_URL` 指向宿主映射的地址（例如 `http://127.0.0.1:8787`），并确保宿主具备 KVM。
+Inside the container, `blink-server` binds `0.0.0.0:8787` by default. XEnsemble only needs to point `BLINK_API_URL` at the host-mapped address (e.g. `http://127.0.0.1:8787`) and ensure the host has KVM.
 
-### 2. 从源码构建（仅本地开发）
+### 2. Build from Source (Local Development Only)
 
-在 Blink 仓库或已安装二进制的机器上：
+On a machine with the Blink repo or a pre-installed binary:
 
 ```bash
-# 一次性构建（macOS 需 LLVM 在 PATH，见仓库 README）
+# one-time build (macOS requires LLVM in PATH, see repo README)
 cargo build --release -p blink-server
 
-# 启动执行面（默认 127.0.0.1:8787，无需 --port）
+# start execution plane (default 127.0.0.1:8787, no --port needed)
 ./target/release/blink-server
 ```
 
-环境变量（可选）：
+Environment variables (optional):
 
-| 变量 / 参数 | 默认 | 说明 |
-|-------------|------|------|
-| `BLINK_BIND` / `--bind` | `127.0.0.1` | 监听地址；同机 sidecar 保持默认即可 |
-| `--port` | `8787` | 端口 |
+| Variable / Flag | Default | Description |
+|-----------------|---------|-------------|
+| `BLINK_BIND` / `--bind` | `127.0.0.1` | Listen address; keep default for same-host sidecar |
+| `--port` | `8787` | Port |
 
-内网多机部署时（需确保网络隔离，Blink 无 API 鉴权）：
+For multi-machine intranet deployment (ensure network isolation; Blink has no API auth):
 
 ```bash
 BLINK_BIND=0.0.0.0 ./target/release/blink-server
 ```
 
-### 3. 健康检查
+### 3. Health Check
 
-XEnsemble 启动前或编排就绪探针应确认 Blink 可用：
+Before starting XEnsemble or during orchestration readiness probes, confirm Blink is available:
 
 ```bash
 curl -sf http://127.0.0.1:8787/api/health
 # {"status":"ok","service":"blink-server",...}
 ```
 
-### 4. 启动 XEnsemble 控制面
+### 4. Start XEnsemble Control Plane
 
 ```bash
 export BLINK_API_URL=http://127.0.0.1:8787
-export RUNTIME_PROVIDER=boxlite   # 加载 BoxLiteRuntimeProvider
-# 按 XEnsemble 文档启动 Server（npm / node / 你的进程管理器）
+export RUNTIME_PROVIDER=boxlite   # load BoxLiteRuntimeProvider
+# start Server per XEnsemble docs (npm / node / your process manager)
 ```
 
-控制面通过 `BLINK_API_URL` 访问 Blink；Desktop/Web **不**直连 Blink。
+The control plane accesses Blink via `BLINK_API_URL`; Desktop/Web **does not** connect directly to Blink.
 
-### 5. Sidecar 部署（生产推荐）
+### 5. Sidecar Deployment (Recommended for Production)
 
-**同机双进程：** `blink-server` 与 XEnsemble Server 在同一 host，`BLINK_API_URL=http://127.0.0.1:8787`，Blink 不暴露公网。
+**Same-host dual process:** `blink-server` and XEnsemble Server on the same host, `BLINK_API_URL=http://127.0.0.1:8787`, Blink not exposed publicly.
 
-**systemd 示例**（路径按实际安装调整）：
+**systemd example** (adjust paths to actual installation):
 
 ```ini
 [Unit]
@@ -206,23 +206,23 @@ RestartSec=5
 WantedBy=multi-user.target
 ```
 
-**容器 / Compose：** 将 `blink-server` 作为 sidecar 容器，与 XEnsemble 共享 network namespace 或私有 bridge；XEnsemble 的 `BLINK_API_URL` 指向 sidecar 服务名（如 `http://blink:8787`）。生产镜像直接使用发布版 Blink，不需要本地 BoxLite checkout 或 libkrun 构建；运行时仍需要 Linux KVM 主机和 `/dev/kvm`。
+**Container / Compose:** run `blink-server` as a sidecar container, sharing network namespace or private bridge with XEnsemble; XEnsemble's `BLINK_API_URL` points at the sidecar service name (e.g. `http://blink:8787`). Production images use the published Blink release directly; no local BoxLite checkout or libkrun build required; the runtime still needs a Linux KVM host and `/dev/kvm`.
 
-启动顺序：**先** `blink-server` 并通过 `/api/health`，**再** 启动 XEnsemble Server。
+Startup order: start `blink-server` **first** and pass `/api/health`, **then** start XEnsemble Server.
 
-### 6. Blink 仓库本地开发
+### 6. Blink Repo Local Development
 
-仅改 Blink 本身时可用 `cargo run -p blink-server`；对接 XEnsemble 时仍建议用 release 二进制，行为与生产一致。直接测 BoxLite 可用 `blink-cli` / `blink-sdk`，无需经过 XEnsemble。
+`cargo run -p blink-server` is usable when only modifying Blink itself; when integrating with XEnsemble, still prefer the release binary so behavior matches production. To test BoxLite directly, use `blink-cli` / `blink-sdk` without going through XEnsemble.
 
 ---
 
-## XEnsemble 待实现
+## XEnsemble Items to Implement
 
-当前 XEnsemble `BoxLiteRuntimeProvider` 等为 **501 占位**。接 Blink 时需：
+Current XEnsemble `BoxLiteRuntimeProvider` etc. are **501 placeholders**. When wiring Blink:
 
-1. 在 `BoxLiteRuntimeProvider` 内 HTTP 客户端调用 `BLINK_API_URL`
-2. 实现 `ensureReady` / `destroy` / checkpoint 映射
-3. `BoxLiteExecAdapter.spawn` 对接 Blink spawn + WebSocket attach（见 [PTY.md](PTY.md)）
-4. 控制面 DB 增加 `runtime_providers` / `blink_session_ref` 映射
+1. Inside `BoxLiteRuntimeProvider`, have the HTTP client call `BLINK_API_URL`
+2. Implement `ensureReady` / `destroy` / checkpoint mapping
+3. Wire `BoxLiteExecAdapter.spawn` to Blink spawn + WebSocket attach (see [PTY.md](PTY.md))
+4. Add `runtime_providers` / `blink_session_ref` mapping to the control-plane DB
 
-Blink 侧 API 已就绪；控制面 Adapter 实现可随 XEnsemble Phase 3 推进。
+Blink-side APIs are ready; control-plane Adapter implementation can proceed with XEnsemble Phase 3.

@@ -1,72 +1,72 @@
-# V-Hub（vsock / BLIN 协议）
+# V-Hub (vsock / BLIN Protocol)
 
-Guest Agent 经 **virtio-vsock** 连到 Host 端口 `10000`（CID `2`，常量见 `blink-shared`），使用 20 字节 **BLIN** 包头多路复用 RPC 与流式输出。
+A Guest Agent connects to Host port `10000` (CID `2`, constants in `blink-shared`) via **virtio-vsock**, using a 20-byte **BLIN** header to multiplex RPC and streaming output.
 
-Host 侧入口：`blink-cli serve --socket <path>`（`blink-sdk::serve_vhub`），需由 libkrun vsock bridge 将 Guest 连接转到该 Unix socket。
+Host-side entry: `blink-cli serve --socket <path>` (`blink-sdk::serve_vhub`), which requires the libkrun vsock bridge to forward the Guest connection to that Unix socket.
 
-**交互式终端的主路径是 WebSocket attach，不是 V-Hub** — 见 [PTY.md](PTY.md)。**Pipe 模式 Agent 执行默认走 BoxLite portal exec，不依赖 vsock** — 见 [STREAMING.md](STREAMING.md)。
+**The primary path for interactive terminals is WebSocket attach, not V-Hub** — see [PTY.md](PTY.md). **Pipe-mode Agent execution defaults to BoxLite portal exec and does not depend on vsock** — see [STREAMING.md](STREAMING.md).
 
 ---
 
-## 包头（20 字节）
+## Header (20 bytes)
 
-| 字段 | 大小 | 说明 |
-|------|------|------|
-| Magic | 4 | `0x424C494E`（`BLIN`） |
+| Field | Size | Description |
+|-------|------|-------------|
+| Magic | 4 | `0x424C494E` (`BLIN`) |
 | Version | 1 | `1` |
-| MessageType | 1 | 见下表 |
+| MessageType | 1 | See table below |
 | Flags | 2 | `0` |
 | Payload length | 4 | LE u32 |
 | Request ID | 8 | LE u64 |
-| Payload | 变长 | 通常 RPC 为 JSON |
+| Payload | variable | Usually JSON for RPC |
 
-常量定义：`blink-shared`（`BLINK_MAGIC`、`PROTOCOL_VERSION`、`VHUB_PORT`、`VMADDR_CID_HOST`）。
+Constants are defined in `blink-shared` (`BLINK_MAGIC`, `PROTOCOL_VERSION`, `VHUB_PORT`, `VMADDR_CID_HOST`).
 
 ---
 
-## 消息类型
+## Message Types
 
-| Type | Value | 方向 | 用途 |
-|------|-------|------|------|
-| `Handshake` | `0x01` | 双向 | 会话建立 |
-| `Heartbeat` | `0x02` | 双向 | 保活 |
-| `Error` | `0x03` | 双向 | 协议错误 |
-| `RpcRequest` | `0x10` | guest → host | 结构化 JSON RPC |
-| `RpcResponse` | `0x11` | host → guest | RPC 回复 |
-| `RpcError` | `0x12` | host → guest | RPC 失败 |
-| `StreamData` | `0x20` | guest → host | 原始 PTY 字节流（预留） |
+| Type | Value | Direction | Purpose |
+|------|-------|-----------|---------|
+| `Handshake` | `0x01` | bidirectional | Session establishment |
+| `Heartbeat` | `0x02` | bidirectional | Keep-alive |
+| `Error` | `0x03` | bidirectional | Protocol error |
+| `RpcRequest` | `0x10` | guest → host | Structured JSON RPC |
+| `RpcResponse` | `0x11` | host → guest | RPC reply |
+| `RpcError` | `0x12` | host → guest | RPC failure |
+| `StreamData` | `0x20` | guest → host | Raw PTY byte stream (reserved) |
 | `TtyResize` | `0x21` | host → guest | JSON `{"rows":N,"cols":N}` |
-| `Stdout` | `0x30` | guest → host | Pipe 模式 stdout 块 |
-| `Stderr` | `0x31` | guest → host | Pipe 模式 stderr 块 |
+| `Stdout` | `0x30` | guest → host | Pipe-mode stdout chunk |
+| `Stderr` | `0x31` | guest → host | Pipe-mode stderr chunk |
 
 ---
 
-## Host 分发器（`serve_vhub`）
+## Host Dispatcher (`serve_vhub`)
 
-实现：`src/core/src/vhub.rs`
+Implementation: `src/core/src/vhub.rs`
 
-1. 首包必须是 `Handshake` → Host 回复 payload `blink-vhub-ready`
-2. 循环读包，直到收到 `RpcRequest` → 回复空 JSON `{}` 的 `RpcResponse`，并将 request payload 返回给 CLI 调用方
-3. 等待 RPC 期间：`Stdout` / `Stderr` / `StreamData` 写入 Host 终端 stdout/stderr；`TtyResize` / `Heartbeat` 静默忽略
+1. The first packet must be `Handshake` → Host replies with payload `blink-vhub-ready`
+2. Loop reading packets until an `RpcRequest` arrives → reply with an empty JSON `{}` `RpcResponse`, and return the request payload to the CLI caller
+3. While waiting for RPC: write `Stdout` / `Stderr` / `StreamData` to the Host terminal stdout/stderr; silently ignore `TtyResize` / `Heartbeat`
 
-`blink-cli serve` 收到 RPC payload 后以 JSON 打印到 stdout。
+`blink-cli serve` prints the RPC payload as JSON to stdout when received.
 
 ---
 
-## 与 REST / PTY 的关系
+## Relationship to REST / PTY
 
 ```
-Agent 短任务（默认）     BoxLite exec，无 vsock     →  STREAMING.md
-交互式终端（生产路径）   spawn + WebSocket attach   →  PTY.md
-Guest vsock RPC/流中继  BLIN @ :10000              →  本文档
+Agent short task (default)     BoxLite exec, no vsock     →  STREAMING.md
+Interactive terminal (prod path)  spawn + WebSocket attach   →  PTY.md
+Guest vsock RPC/stream relay   BLIN @ :10000              →  this doc
 ```
 
-V-Hub 上 `StreamData` / 完整 PTY-over-vsock 尚未作为生产路径接入；控制面可按需桥接 vsock。
+`StreamData` / full PTY-over-vsock on V-Hub has not yet been wired as a production path; control planes can bridge vsock on demand.
 
 ---
 
-## 相关文档
+## Related Docs
 
-- [STREAMING.md](STREAMING.md) — Pipe / PTY 双轨 I/O 选型
-- [PTY.md](PTY.md) — WebSocket attach 协议与示例
-- [XENSEMBLE.md](XENSEMBLE.md) — 控制面 API 映射
+- [STREAMING.md](STREAMING.md) — Pipe / PTY dual-track I/O selection
+- [PTY.md](PTY.md) — WebSocket attach protocol and examples
+- [XENSEMBLE.md](XENSEMBLE.md) — Control-plane API mapping

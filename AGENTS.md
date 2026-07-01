@@ -2,23 +2,23 @@
 
 ## Documentation
 
-`docs/` 下文档文件名使用 **单个英文词**（UPPERCASE），便于引用与检索：
+`docs/` documentation filenames use a **single English word** (UPPERCASE) for easy reference and lookup:
 
-| 文件 | 主题 |
-|------|------|
-| [PRODUCT.md](docs/PRODUCT.md) | 产品定义、免费/付费、BYOK |
-| [XENSEMBLE.md](docs/XENSEMBLE.md) | 控制面集成契约 |
-| [STREAMING.md](docs/STREAMING.md) | Pipe / PTY 双轨 I/O |
-| [PTY.md](docs/PTY.md) | 交互式终端（spawn + WebSocket） |
-| [VHUB.md](docs/VHUB.md) | V-Hub vsock / BLIN 协议 |
+| File | Topic |
+|------|-------|
+| [PRODUCT.md](docs/PRODUCT.md) | Product definition, free/paid, BYOK |
+| [XENSEMBLE.md](docs/XENSEMBLE.md) | Control-plane integration contract |
+| [STREAMING.md](docs/STREAMING.md) | Pipe / PTY dual-track I/O |
+| [PTY.md](docs/PTY.md) | Interactive terminal (spawn + WebSocket) |
+| [VHUB.md](docs/VHUB.md) | V-Hub vsock / BLIN protocol |
 
-新增文档请延续此命名；专有名词（如 `XENSEMBLE`）可保留。
+New documents should follow the same naming; proper nouns (e.g. `XENSEMBLE`) may be kept.
 
 ## Product
 
 Blink rents isolated sandboxes for user-owned agents. **Ephemeral `run` = one-shot (free tier). Session + snapshot + export/import = paid persistence.** Details: [docs/PRODUCT.md](docs/PRODUCT.md).
 
-**Blink 是执行面能力，不是用户产品。** 用户登录、Agent 控制台、配额由 [XEnsemble](https://github.com/EeroEternal/XEnsemble) 等控制面负责；Blink 通过 `blink-server` REST API 供控制面调用。集成契约见 [docs/XENSEMBLE.md](docs/XENSEMBLE.md)。
+**Blink is an execution-plane capability, not a user-facing product.** User login, Agent consoles, and quotas are provided by control planes such as [XEnsemble](https://github.com/EeroEternal/XEnsemble); Blink supplies a `blink-server` REST API for control planes to call. See the integration contract in [docs/XENSEMBLE.md](docs/XENSEMBLE.md).
 
 ## 1. Goal
 
@@ -45,9 +45,9 @@ Agents in the Blink ecosystem are untrusted, dynamically generated, or ephemeral
 
 ### I/O paths
 
-- **Pipe（默认）：** Agent 短任务，BoxLite exec，可选 `execution_result` JSON — [docs/STREAMING.md](docs/STREAMING.md)
-- **PTY（交互式）：** spawn + WebSocket attach — [docs/PTY.md](docs/PTY.md)；XEnsemble 终端 UI 走此路径
-- **V-Hub（可选）：** Guest vsock RPC / 流中继，BLIN 协议 — [docs/VHUB.md](docs/VHUB.md)；`blink-cli serve --socket <path>`
+- **Pipe (default):** Agent short tasks, BoxLite exec, optional `execution_result` JSON — [docs/STREAMING.md](docs/STREAMING.md)
+- **PTY (interactive):** spawn + WebSocket attach — [docs/PTY.md](docs/PTY.md); XEnsemble terminal UI uses this path
+- **V-Hub (optional):** Guest vsock RPC / stream relay, BLIN protocol — [docs/VHUB.md](docs/VHUB.md); `blink-cli serve --socket <path>`
 
 ### Persistent Sessions (long-running agents)
 
@@ -64,4 +64,4 @@ Ephemeral `blink-cli run` remains for one-shot execution without persistence.
 
 ### Authentication
 
-- **blink-server**：无 API 鉴权。默认绑定 `127.0.0.1`；生产环境靠网络隔离（内网 / sidecar），用户鉴权与配额由控制面负责。
+- **blink-server**: performs no API authentication. Binds `127.0.0.1` by default; in production rely on network isolation (intranet / sidecar). User authentication and quotas are handled by the control plane.

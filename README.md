@@ -100,17 +100,17 @@ async fn main() -> anyhow::Result<()> {
 
 ## Sandbox API (for control planes)
 
-控制面（如 XEnsemble）通过 HTTP 调用 **`blink-server`**，不链接 Rust lib。完整集成与 sidecar 部署 → **[docs/XENSEMBLE.md](docs/XENSEMBLE.md)**。
+Control planes (e.g. XEnsemble) call **`blink-server`** over HTTP and do not link the Rust lib. Full integration and sidecar deployment → **[docs/XENSEMBLE.md](docs/XENSEMBLE.md)**。
 
 ```bash
 cargo build --release -p blink-server
-./target/release/blink-server          # 默认 http://127.0.0.1:8787
+./target/release/blink-server          # default http://127.0.0.1:8787
 curl -sf http://127.0.0.1:8787/api/health
 ```
 
-Blink **不做 API 鉴权**。用户身份与配额由控制面负责；默认只监听 `127.0.0.1`，生产环境同机 sidecar 或内网暴露（`BLINK_BIND=0.0.0.0` 时需网络隔离）。
+Blink **does not perform API authentication**. User identity and quotas are handled by the control plane; it only listens on `127.0.0.1` by default. In production, use same-host sidecar or private network exposure (network isolation is required when `BLINK_BIND=0.0.0.0`).
 
-Blink 仓库内快速迭代可用 `cargo run -p blink-server`；对接控制面时请用 release 二进制，见 [XENSEMBLE.md](docs/XENSEMBLE.md)。
+For rapid iteration inside the Blink repo, `cargo run -p blink-server` works; when integrating with a control plane, use the release binary. See [XENSEMBLE.md](docs/XENSEMBLE.md)。
 
 ### Release deployment
 

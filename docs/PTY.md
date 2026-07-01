@@ -1,33 +1,33 @@
-# PTY 交互式终端
+# PTY Interactive Terminal
 
-Blink 提供 **双轨执行**：
+Blink provides **dual-track execution**:
 
-| 模式 | 适用场景 | 入口 |
-|------|----------|------|
-| **Pipe（非 TTY）** | AI Agent 短任务、结构化 JSON 结果 | `POST /api/runs`、`POST /api/sessions/{name}/runs`、`blink-cli session run` |
-| **PTY（交互式）** | 人工调试、TUI（vim/top）、长期 shell | `POST /api/sessions/{name}/spawn` + WebSocket attach、`blink-cli session spawn --tty` |
+| Mode | Use Case | Entry |
+|------|----------|-------|
+| **Pipe (non-TTY)** | AI Agent short tasks, structured JSON results | `POST /api/runs`, `POST /api/sessions/{name}/runs`, `blink-cli session run` |
+| **PTY (interactive)** | Human debugging, TUI (vim/top), long-lived shells | `POST /api/sessions/{name}/spawn` + WebSocket attach, `blink-cli session spawn --tty` |
 
-PTY 底层由 **BoxLite** 提供（`BoxCommand::tty(true)`、`Execution::stdin()` / `stdout()`、`resize_tty`）。Blink 在 Session 内封装 spawn + attach 桥接，协议与 BoxLite REST attach **兼容**。
+PTY is provided by **BoxLite** underneath (`BoxCommand::tty(true)`, `Execution::stdin()` / `stdout()`, `resize_tty`). Blink wraps spawn + attach bridging inside a Session; the protocol is **compatible** with BoxLite REST attach.
 
 ---
 
 ## CLI
 
 ```bash
-# 打开 Session
+# Open a Session
 blink-cli session open --name my-agent
 
-# 交互式 shell（PTY）
+# Interactive shell (PTY)
 blink-cli session spawn --name my-agent --tty -- sh -i
 
-# 非 TTY 一次性命令（stdout/stderr 仍实时打到本地终端，但无 PTY 语义）
+# Non-TTY one-shot command (stdout/stderr still stream to local terminal in real time, but no PTY semantics)
 blink-cli session spawn --name my-agent -- ls -la
 
-# 指定初始终端尺寸
+# Specify initial terminal size
 blink-cli session spawn --name my-agent --tty --rows 24 --cols 80 -- sh -i
 ```
 
-完成后输出 JSON：`{"event":"exec_finished","session":"...","execution_id":"...","exit_code":N}`。
+On completion, outputs JSON: `{"event":"exec_finished","session":"...","execution_id":"...","exit_code":N}`.
 
 ---
 
@@ -50,7 +50,7 @@ Content-Type: application/json
 }
 ```
 
-响应：
+Response:
 
 ```json
 {
@@ -62,7 +62,7 @@ Content-Type: application/json
 }
 ```
 
-**注意：** `execution_id` 在首次 WebSocket attach 前保存在服务端 registry；attach 成功后 registry 条目被消费，**不可重复 attach**。
+**Note:** `execution_id` is stored in the server-side registry before the first WebSocket attach; once attach succeeds the registry entry is consumed and **reattach is not possible**.
 
 ### 2. WebSocket Attach
 
@@ -71,16 +71,16 @@ GET /api/sessions/{name}/executions/{execution_id}/attach
 Upgrade: websocket
 ```
 
-连接 URL 示例：`ws://127.0.0.1:8787/api/sessions/my-agent/executions/abc123/attach`
+Example connection URL: `ws://127.0.0.1:8787/api/sessions/my-agent/executions/abc123/attach`
 
-#### 客户端 → 服务端
+#### Client → Server
 
-| 帧类型 | 内容 |
-|--------|------|
-| **Binary** | 原始 stdin 字节 |
-| **Text JSON** | 控制消息（见下表） |
+| Frame Type | Content |
+|------------|---------|
+| **Binary** | Raw stdin bytes |
+| **Text JSON** | Control messages (see table below) |
 
-控制消息：
+Control messages:
 
 ```json
 {"type":"resize","rows":30,"cols":120}
@@ -88,15 +88,15 @@ Upgrade: websocket
 {"type":"stdin_eof"}
 ```
 
-#### 服务端 → 客户端
+#### Server → Client
 
-| 帧类型 | 内容 |
-|--------|------|
-| **Binary** | `[channel, payload...]`：`0x01` = stdout（PTY 模式下合并终端输出），`0x02` = stderr（仅非 TTY pipe 模式） |
-| **Text JSON** | `{"type":"exit","exit_code":0}` 进程结束（终端帧） |
-| **Text JSON** | `{"type":"error","message":"..."}` 非致命错误信息 |
+| Frame Type | Content |
+|------------|---------|
+| **Binary** | `[channel, payload...]`: `0x01` = stdout (merged terminal output in PTY mode), `0x02` = stderr (non-TTY pipe mode only) |
+| **Text JSON** | `{"type":"exit","exit_code":0}` process ended (terminal frame) |
+| **Text JSON** | `{"type":"error","message":"..."}` non-fatal error information |
 
-#### JavaScript 示例
+#### JavaScript Example
 
 ```javascript
 const base = 'http://127.0.0.1:8787';
@@ -137,47 +137,47 @@ ws.onopen = () => {
 
 ---
 
-## 与短任务路径的区别
+## Difference from Short-Task Path
 
-**Pipe 模式**（`exec_agent_script` / `session run`）：
+**Pipe mode** (`exec_agent_script` / `session run`):
 
-- 无 `.tty(true)`
-- 进程结束后一次性解析 stdout 中的 `execution_result` JSON
-- 适合 Agent SDK、LLM tool-call
+- No `.tty(true)`
+- After process ends, parse `execution_result` JSON from stdout once
+- Suitable for Agent SDKs, LLM tool-calls
 
-**PTY 模式**（`spawn` + attach）：
+**PTY mode** (`spawn` + attach):
 
 - `BoxCommand::tty(true)`
-- stdin/stdout 实时双向流
-- 支持 `resize_tty`、Unix signal
-- 不解析 `execution_result`；退出码由 attach 结束时的 `exit` 帧传递
+- Real-time bidirectional stdin/stdout stream
+- Supports `resize_tty`, Unix signals
+- Does not parse `execution_result`; exit code is delivered via the `exit` frame at attach end
 
 ---
 
-## XEnsemble 集成
+## XEnsemble Integration
 
-控制面 `BoxLiteExecAdapter.spawn(cmd, args, env)` 应对：
+Control-plane `BoxLiteExecAdapter.spawn(cmd, args, env)` should:
 
-1. `POST /api/sessions/{blinkSessionName}/spawn`（`tty: true`）
-2. 将返回的 `attach_url` 桥接到 Desktop/Web 终端 WebSocket
+1. `POST /api/sessions/{blinkSessionName}/spawn` (`tty: true`)
+2. Bridge the returned `attach_url` to the Desktop/Web terminal WebSocket
 
-详见 [XENSEMBLE.md](XENSEMBLE.md)。
+See [XENSEMBLE.md](XENSEMBLE.md) for details.
 
 ---
 
-## V-Hub（vsock，次要路径）
+## V-Hub (vsock, secondary path)
 
-V-Hub 协议已预留 PTY 相关消息类型（见 [VHUB.md](VHUB.md)）：
+The V-Hub protocol has reserved PTY-related message types (see [VHUB.md](VHUB.md)):
 
-- `StreamData (0x20)` — 原始 PTY 字节流
+- `StreamData (0x20)` — raw PTY byte stream
 - `TtyResize (0x21)` — JSON `{"rows":N,"cols":N}`
 
-当前 **主路径** 是 blink-server WebSocket attach；`blink-cli serve` 的 V-Hub 仍主要用于 RPC/Stdout 中继，完整 PTY over vsock 可按 XEnsemble `attachSession` 需求后续接入。
+The **primary path** today is blink-server WebSocket attach; `blink-cli serve` V-Hub is still mainly used for RPC/Stdout relay. Full PTY over vsock can be connected later according to XEnsemble `attachSession` requirements.
 
 ---
 
-## 相关文档
+## Related Docs
 
-- [STREAMING.md](STREAMING.md) — 双轨输出架构总览
-- [XENSEMBLE.md](XENSEMBLE.md) — 控制面 API 映射
-- [PRODUCT.md](PRODUCT.md) — 产品层级与能力边界
+- [STREAMING.md](STREAMING.md) — Dual-track output architecture overview
+- [XENSEMBLE.md](XENSEMBLE.md) — Control-plane API mapping
+- [PRODUCT.md](PRODUCT.md) — Product levels and capability boundaries
