@@ -63,6 +63,14 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            protobuf-compiler \
+            libssl-dev \
+            pkg-config
+
       - id: meta
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
