@@ -124,14 +124,8 @@ async fn run_ws_attach(
     }
 
     if let Some(code) = snapshot.exit_code.or(broker.exit_code()) {
-        let tail = broker.snapshot_after(last_sent_seq);
-        for frame in tail.frames {
-            if frame.seq <= last_sent_seq {
-                continue;
-            }
-            send_frame(&mut ws_sink, &frame, seq_framing).await?;
-            last_sent_seq = frame.seq;
-        }
+        let _ = flush_buffered_frames(&mut ws_sink, broker.as_ref(), last_sent_seq, seq_framing)
+            .await?;
         send_exit(&mut ws_sink, code).await?;
         let _ = ws_sink.close().await;
         return Ok(());
@@ -150,17 +144,23 @@ async fn run_ws_attach(
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
                         tracing::warn!(%skipped, "execution attach broadcast lagged");
+                        last_sent_seq = flush_buffered_frames(
+                            &mut ws_sink,
+                            broker.as_ref(),
+                            last_sent_seq,
+                            seq_framing,
+                        )
+                        .await?;
                         continue;
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                        let tail = broker.snapshot_after(last_sent_seq);
-                        for frame in tail.frames {
-                            if frame.seq <= last_sent_seq {
-                                continue;
-                            }
-                            send_frame(&mut ws_sink, &frame, seq_framing).await?;
-                            last_sent_seq = frame.seq;
-                        }
+                        let _ = flush_buffered_frames(
+                            &mut ws_sink,
+                            broker.as_ref(),
+                            last_sent_seq,
+                            seq_framing,
+                        )
+                        .await?;
                         let exit_code = broker.exit_code().or(*exit_rx.borrow());
                         if let Some(code) = exit_code {
                             send_exit(&mut ws_sink, code).await?;
@@ -193,14 +193,13 @@ async fn run_ws_attach(
             changed = exit_rx.changed() => {
                 match changed {
                     Ok(()) => {
-                        let tail = broker.snapshot_after(last_sent_seq);
-                        for frame in tail.frames {
-                            if frame.seq <= last_sent_seq {
-                                continue;
-                            }
-                            send_frame(&mut ws_sink, &frame, seq_framing).await?;
-                            last_sent_seq = frame.seq;
-                        }
+                        let _ = flush_buffered_frames(
+                            &mut ws_sink,
+                            broker.as_ref(),
+                            last_sent_seq,
+                            seq_framing,
+                        )
+                        .await?;
                         let exit_code = *exit_rx.borrow();
                         if let Some(code) = exit_code {
                             send_exit(&mut ws_sink, code).await?;
@@ -249,6 +248,24 @@ fn parse_boolish(value: Option<&str>) -> bool {
 
 fn is_stdin_eof(text: &str) -> bool {
     text.contains(r#""type":"stdin_eof""#)
+}
+
+async fn flush_buffered_frames(
+    ws_sink: &mut futures::stream::SplitSink<WebSocket, Message>,
+    broker: &ExecSession,
+    last_sent_seq: u64,
+    seq_framing: bool,
+) -> anyhow::Result<u64> {
+    let tail = broker.snapshot_after(last_sent_seq);
+    let mut newest_seq = last_sent_seq;
+    for frame in tail.frames {
+        if frame.seq <= last_sent_seq {
+            continue;
+        }
+        send_frame(ws_sink, &frame, seq_framing).await?;
+        newest_seq = frame.seq;
+    }
+    Ok(newest_seq)
 }
 
 async fn send_frame(

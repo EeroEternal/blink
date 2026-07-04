@@ -109,6 +109,9 @@ Handler flow (`run_ws_attach`):
    - broadcast frame → skip `seq <= last_sent_seq` (dedupe snapshot/live overlap), else send.
    - ws binary → `broker.stdin_tx.send(bytes)`.
    - ws text → `stdin_eof` / `handle_control_message(&broker.execution_for_control, …)`.
+     `stdin_eof` irreversibly EOFs the execution's stdin: the broker drops the stdin
+     sender, which closes the process stdin at the OS level, so a later re-attach cannot
+     re-open stdin for the same execution.
    - broker exit signal → send `exit` frame, close.
 
 **Binary frame format:**

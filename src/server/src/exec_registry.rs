@@ -437,6 +437,23 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn snapshot_after_recovers_tail_after_cursor_even_with_eviction() {
+        let core = ExecSessionCore::new(5);
+        for idx in 1..=5 {
+            core.push_frame(frame(&[0x01, b'0' + idx as u8]));
+        }
+
+        let snapshot = core.snapshot_after(3);
+        assert_eq!(snapshot.first_seq, 4);
+        assert_eq!(snapshot.head_seq, 5);
+        assert_eq!(snapshot.frames.len(), 2);
+        assert_eq!(
+            snapshot.frames.iter().map(|f| f.seq).collect::<Vec<_>>(),
+            vec![4, 5]
+        );
+    }
+
+    #[tokio::test]
     async fn drains_remaining_output_before_recording_exit() {
         let core = ExecSessionCore::new(1024);
         let (tx, rx) = mpsc::unbounded_channel();
