@@ -62,16 +62,29 @@ Response:
 }
 ```
 
-**Note:** `execution_id` is stored in the server-side registry before the first WebSocket attach; once attach succeeds the registry entry is consumed and **reattach is not possible**.
+`execution_id` is stable for the lifetime of the execution. Blink now keeps a server-side
+output buffer for each execution so the same execution can be attached multiple times
+over its lifetime.
 
 ### 2. WebSocket Attach
 
 ```http
-GET /api/sessions/{name}/executions/{execution_id}/attach
+GET /api/sessions/{name}/executions/{execution_id}/attach?after=42&seq=1
 Upgrade: websocket
 ```
 
 Example connection URL: `ws://127.0.0.1:8787/api/sessions/my-agent/executions/abc123/attach`
+
+Query parameters:
+
+| Param | Meaning |
+|-------|---------|
+| `after=<seq>` | Resume from a cursor. Only frames with `seq > after` are delivered. |
+| `seq=1` | Enable seq framing on binary output. Implied when `after` is present. |
+
+Blink stores recent output in-memory in a bounded ring buffer (default
+`BLINK_ATTACH_BUFFER_BYTES=1 MiB`) and keeps the execution record alive for a linger
+window after exit (default `BLINK_ATTACH_LINGER_SECS=300`).
 
 #### Client → Server
 
@@ -92,7 +105,8 @@ Control messages:
 
 | Frame Type | Content |
 |------------|---------|
-| **Binary** | `[channel, payload...]`: `0x01` = stdout (merged terminal output in PTY mode), `0x02` = stderr (non-TTY pipe mode only) |
+| **Binary** | Legacy: `[channel, payload...]`. `0x01` = stdout, `0x02` = stderr. |
+| **Binary** | Seq framing (`seq=1`): `[channel, seq:u64-be, payload...]`. The 8-byte seq is inserted immediately after the channel byte. |
 | **Text JSON** | `{"type":"exit","exit_code":0}` process ended (terminal frame) |
 | **Text JSON** | `{"type":"error","message":"..."}` non-fatal error information |
 
@@ -126,7 +140,7 @@ ws.onmessage = (ev) => {
   }
   const buf = new Uint8Array(ev.data);
   const channel = buf[0];
-  const text = new TextDecoder().decode(buf.subarray(1));
+  const text = new TextDecoder().decode(buf.subarray(1)); // legacy mode
   process.stdout.write(text); // channel 0x01 stdout, 0x02 stderr
 };
 
@@ -151,6 +165,8 @@ ws.onopen = () => {
 - Real-time bidirectional stdin/stdout stream
 - Supports `resize_tty`, Unix signals
 - Does not parse `execution_result`; exit code is delivered via the `exit` frame at attach end
+- Attach can be repeated while the execution is alive or within the linger window after
+  exit; use `after=<seq>` to backfill missed output.
 
 ---
 
