@@ -1,5 +1,6 @@
 //! Blink core runtime built on BoxLite VM infrastructure.
 
+mod boxlite_options;
 mod context;
 mod exec;
 mod pty;

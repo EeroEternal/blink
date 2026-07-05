@@ -2,9 +2,10 @@ use std::path::Path;
 
 use anyhow::Context;
 use boxlite::BoxliteRuntime;
-use boxlite::runtime::options::{BoxOptions, BoxliteOptions, NetworkSpec, RootfsSpec};
+use boxlite::runtime::options::{BoxOptions, NetworkSpec, RootfsSpec};
 use tracing::info;
 
+use crate::boxlite_options::load_boxlite_options;
 use crate::exec::exec_agent_script;
 use crate::AgentResult;
 use blink_shared::DEFAULT_ROOTFS_IMAGE;
@@ -17,7 +18,7 @@ pub async fn run_agent_script(script_path: &Path, image: &str) -> anyhow::Result
 
     info!(script = %script_path.display(), image, "ephemeral run");
 
-    let runtime = BoxliteRuntime::new(BoxliteOptions::default())
+    let runtime = BoxliteRuntime::new(load_boxlite_options()?)
         .context("failed to initialize BoxLite runtime")?;
 
     let options = BoxOptions {

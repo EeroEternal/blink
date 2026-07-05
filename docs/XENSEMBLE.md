@@ -158,6 +158,8 @@ Environment variables (optional):
 |-----------------|---------|-------------|
 | `BLINK_BIND` / `--bind` | `127.0.0.1` | Listen address; keep default for same-host sidecar |
 | `--port` | `8787` | Port |
+| `BLINK_IMAGE_REGISTRIES` | _(empty)_ | Comma-separated OCI registries, e.g. `localhost:5000@http,ghcr.io/myorg@https+search` |
+| `BLINK_BOXLITE_OPTIONS` | _(empty)_ | Full `BoxliteOptions` JSON (overrides `BLINK_IMAGE_REGISTRIES`) |
 
 For multi-machine intranet deployment (ensure network isolation; Blink has no API auth):
 

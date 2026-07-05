@@ -6,12 +6,13 @@ use anyhow::{Context, Result, bail};
 use boxlite::{
     BoxCommand, BoxliteRuntime, LiteBox, SnapshotInfo,
     runtime::options::{
-        BoxArchive, BoxOptions, BoxliteOptions, ExportOptions, NetworkSpec, RootfsSpec,
+        BoxArchive, BoxOptions, ExportOptions, NetworkSpec, RootfsSpec,
         SnapshotOptions, VolumeSpec,
     },
 };
 use tracing::info;
 
+use crate::boxlite_options::load_boxlite_options;
 use crate::exec::exec_agent_script;
 use crate::runner::run_agent_script;
 use crate::AgentResult;
@@ -55,7 +56,7 @@ impl BlinkContext {
         let export_dir = home.join(".blink").join("exports");
         std::fs::create_dir_all(&export_dir).context("failed to create export directory")?;
         Ok(Self {
-            runtime: BoxliteRuntime::new(BoxliteOptions::default())
+            runtime: BoxliteRuntime::new(load_boxlite_options()?)
                 .context("failed to initialize BoxLite runtime")?,
             export_dir,
         })
