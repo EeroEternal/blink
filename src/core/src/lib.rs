@@ -18,7 +18,7 @@ pub struct AgentResult {
 }
 
 pub use boxlite::{ExecResult, Execution};
-pub use context::{BlinkContext, SessionInfo};
+pub use context::{BlinkContext, SessionInfo, SessionVolume};
 pub use runner::{run_agent_script, run_agent_script_default};
 pub use session::{
     checkpoint_session, export_session, import_session, list_checkpoints, list_sessions,

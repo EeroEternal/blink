@@ -76,7 +76,7 @@ XEnsemble `server/src/runtime/BoxLite*.js` should map to Blink REST API as follo
 
 | XEnsemble Interface | Blink API | Description |
 |---------------------|-----------|-------------|
-| `RuntimeProvider.ensureReady(project, opts)` | `POST /api/sessions` | `name` = `{userId}-{projectId}` or runtime-mapped id; `warm` optional |
+| `RuntimeProvider.ensureReady(project, opts)` | `POST /api/sessions` | `name` = runtime id; optional `warm`; optional `volumes[]` virtiofs mounts (`host_path`, `guest_path`, `read_only`) |
 | `RuntimeProvider.destroy(runtimeRef)` | `DELETE /api/sessions/{name}` | Destroy sandbox |
 | `RuntimeProvider.attachSession(...)` | WS `/api/sessions/{name}/executions/{id}/attach` | PTY streaming terminal (spawn first, see [PTY.md](PTY.md)) |
 | `ExecAdapter.exec(cmd, args, env)` | `POST /api/sessions/{name}/runs` | Short task; or ephemeral `POST /api/runs` |
@@ -84,7 +84,7 @@ XEnsemble `server/src/runtime/BoxLite*.js` should map to Blink REST API as follo
 | Snapshot / checkpoint | `POST /api/sessions/{name}/checkpoints` | Corresponds to Deployment revision |
 | Restore checkpoint | `POST /api/sessions/{name}/checkpoints/{snap}/restore` | |
 | Export / migrate | `POST /api/sessions/{name}/export` + `POST /api/import` | |
-| `FsAdapter.*` | (planned) sandbox file API or virtiofs proxy | Currently indirect via exec inside session |
+| `FsAdapter.*` | virtiofs via `POST /api/sessions` `volumes` + exec in session | Map host workspace into guest (e.g. `/workspace`); list/read via exec |
 
 Session naming recommendation: `{xensembleRuntimeId}`. The control plane maintains a `runtimeId ↔ blinkSessionName` mapping table. **Do not expose** Blink session names or internal box ids to clients.
 

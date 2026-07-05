@@ -7,7 +7,7 @@ use boxlite::{
     BoxCommand, BoxliteRuntime, LiteBox, SnapshotInfo,
     runtime::options::{
         BoxArchive, BoxOptions, BoxliteOptions, ExportOptions, NetworkSpec, RootfsSpec,
-        SnapshotOptions,
+        SnapshotOptions, VolumeSpec,
     },
 };
 use tracing::info;
@@ -16,6 +16,24 @@ use crate::exec::exec_agent_script;
 use crate::runner::run_agent_script;
 use crate::AgentResult;
 use blink_shared::AGENT_MEMORY_DIR;
+
+#[derive(Clone, Debug, serde::Deserialize)]
+pub struct SessionVolume {
+    pub host_path: String,
+    pub guest_path: String,
+    #[serde(default)]
+    pub read_only: bool,
+}
+
+impl From<SessionVolume> for VolumeSpec {
+    fn from(volume: SessionVolume) -> Self {
+        Self {
+            host_path: volume.host_path,
+            guest_path: volume.guest_path,
+            read_only: volume.read_only,
+        }
+    }
+}
 
 #[derive(Clone)]
 pub struct BlinkContext {
@@ -47,12 +65,17 @@ impl BlinkContext {
         &self.export_dir
     }
 
-    fn session_options(image: &str) -> BoxOptions {
+    fn session_options(image: &str, volumes: &[VolumeSpec]) -> BoxOptions {
+        let working_dir = volumes
+            .first()
+            .map(|volume| volume.guest_path.clone());
         BoxOptions {
             rootfs: RootfsSpec::Image(image.to_string()),
             network: NetworkSpec::Disabled,
             auto_remove: false,
             detach: true,
+            volumes: volumes.to_vec(),
+            working_dir,
             ..Default::default()
         }
     }
@@ -78,12 +101,19 @@ impl BlinkContext {
             .collect())
     }
 
-    pub async fn open_session(&self, name: &str, image: &str, warm: bool) -> Result<(String, bool)> {
-        info!(name, image, warm, "opening session");
+    pub async fn open_session(
+        &self,
+        name: &str,
+        image: &str,
+        warm: bool,
+        volumes: Vec<SessionVolume>,
+    ) -> Result<(String, bool)> {
+        info!(name, image, warm, volume_count = volumes.len(), "opening session");
+        let volume_specs: Vec<VolumeSpec> = volumes.into_iter().map(VolumeSpec::from).collect();
         let (litebox, created) = self
             .runtime
             .get_or_create(
-                Self::session_options(image),
+                Self::session_options(image, &volume_specs),
                 Some(name.to_string()),
             )
             .await

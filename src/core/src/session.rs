@@ -7,11 +7,15 @@ pub use crate::context::{BlinkContext, SessionInfo};
 
 /// Open (create or reuse) a named persistent agent session.
 pub async fn open_session(name: &str, image: &str) -> Result<(String, bool)> {
-    BlinkContext::new()?.open_session(name, image, false).await
+    BlinkContext::new()?
+        .open_session(name, image, false, Vec::new())
+        .await
 }
 
 pub async fn open_warm_session(name: &str, image: &str) -> Result<(String, bool)> {
-    BlinkContext::new()?.open_session(name, image, true).await
+    BlinkContext::new()?
+        .open_session(name, image, true, Vec::new())
+        .await
 }
 
 pub async fn run_in_session(name: &str, script_path: &Path) -> Result<crate::AgentResult> {

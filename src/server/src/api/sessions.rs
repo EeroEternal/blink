@@ -53,6 +53,8 @@ struct OpenSessionRequest {
     image: String,
     #[serde(default)]
     warm: bool,
+    #[serde(default)]
+    volumes: Vec<blink_sdk::SessionVolume>,
 }
 
 fn default_image() -> String {
@@ -68,7 +70,7 @@ async fn open_session(
     }
     let (box_id, created) = state
         .ctx
-        .open_session(&body.name, &body.image, body.warm)
+        .open_session(&body.name, &body.image, body.warm, body.volumes)
         .await
         .map_err(|e| ApiError::internal(e.to_string()))?;
     Ok(Json(serde_json::json!({
