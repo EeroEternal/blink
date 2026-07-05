@@ -56,20 +56,24 @@ jobs:
   release-binary:
     needs: build-image
     runs-on: ubuntu-latest
+    container: debian:bookworm
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
-
       - name: Install build dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            build-essential \
+            ca-certificates \
+            curl \
             protobuf-compiler \
             libssl-dev \
             pkg-config
+
+      - uses: dtolnay/rust-toolchain@stable
 
       - id: meta
         run: |
