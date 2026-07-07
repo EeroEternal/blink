@@ -49,7 +49,7 @@ impl AppState {
                     blink_sdk::SandboxTier::Session => {
                         let name = session_name.as_deref().unwrap();
                         let image = image.as_deref().unwrap_or(DEFAULT_ROOTFS_IMAGE);
-                        ctx.open_session(name, image, warm, Vec::new()).await?;
+                        ctx.open_session(name, image, warm, Vec::new(), None).await?;
                         ctx.run_in_session(name, path).await
                     }
                 }

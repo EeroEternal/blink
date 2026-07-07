@@ -2,11 +2,12 @@ use std::path::Path;
 
 use anyhow::Context;
 use boxlite::BoxliteRuntime;
-use boxlite::runtime::options::{BoxOptions, NetworkSpec, RootfsSpec};
+use boxlite::runtime::options::{BoxOptions, RootfsSpec};
 use tracing::info;
 
 use crate::boxlite_options::load_boxlite_options;
 use crate::exec::exec_agent_script;
+use crate::network::resolve_network_spec;
 use crate::AgentResult;
 use blink_shared::DEFAULT_ROOTFS_IMAGE;
 
@@ -21,9 +22,11 @@ pub async fn run_agent_script(script_path: &Path, image: &str) -> anyhow::Result
     let runtime = BoxliteRuntime::new(load_boxlite_options()?)
         .context("failed to initialize BoxLite runtime")?;
 
+    let network = resolve_network_spec(None).context("resolve ephemeral network")?;
+
     let options = BoxOptions {
         rootfs: RootfsSpec::Image(image.to_string()),
-        network: NetworkSpec::Disabled,
+        network,
         auto_remove: true,
         detach: false,
         ..Default::default()

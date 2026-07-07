@@ -14,6 +14,7 @@ use tracing::info;
 
 use crate::boxlite_options::load_boxlite_options;
 use crate::exec::exec_agent_script;
+use crate::network::resolve_network_spec;
 use crate::runner::run_agent_script;
 use crate::AgentResult;
 use blink_shared::AGENT_MEMORY_DIR;
@@ -66,13 +67,17 @@ impl BlinkContext {
         &self.export_dir
     }
 
-    fn session_options(image: &str, volumes: &[VolumeSpec]) -> BoxOptions {
+    fn session_options(
+        image: &str,
+        volumes: &[VolumeSpec],
+        network: NetworkSpec,
+    ) -> BoxOptions {
         let working_dir = volumes
             .first()
             .map(|volume| volume.guest_path.clone());
         BoxOptions {
             rootfs: RootfsSpec::Image(image.to_string()),
-            network: NetworkSpec::Disabled,
+            network,
             auto_remove: false,
             detach: true,
             volumes: volumes.to_vec(),
@@ -108,13 +113,15 @@ impl BlinkContext {
         image: &str,
         warm: bool,
         volumes: Vec<SessionVolume>,
+        network: Option<boxlite::runtime::options::NetworkConfig>,
     ) -> Result<(String, bool)> {
         info!(name, image, warm, volume_count = volumes.len(), "opening session");
+        let network_spec = resolve_network_spec(network)?;
         let volume_specs: Vec<VolumeSpec> = volumes.into_iter().map(VolumeSpec::from).collect();
         let (litebox, created) = self
             .runtime
             .get_or_create(
-                Self::session_options(image, &volume_specs),
+                Self::session_options(image, &volume_specs, network_spec),
                 Some(name.to_string()),
             )
             .await

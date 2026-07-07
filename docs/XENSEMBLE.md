@@ -76,7 +76,7 @@ XEnsemble `server/src/runtime/BoxLite*.js` should map to Blink REST API as follo
 
 | XEnsemble Interface | Blink API | Description |
 |---------------------|-----------|-------------|
-| `RuntimeProvider.ensureReady(project, opts)` | `POST /api/sessions` | `name` = runtime id; optional `warm`; optional `volumes[]` virtiofs mounts (`host_path`, `guest_path`, `read_only`) |
+| `RuntimeProvider.ensureReady(project, opts)` | `POST /api/sessions` | `name` = runtime id; optional `warm`; optional `volumes[]` virtiofs mounts; optional `network` (`mode`: `enabled`/`disabled`, `allow_net`: host allowlist — empty = full egress). Default: **enabled**. Env: `BLINK_NETWORK`, `BLINK_ALLOW_NET`. |
 | `RuntimeProvider.destroy(runtimeRef)` | `DELETE /api/sessions/{name}` | Destroy sandbox |
 | `RuntimeProvider.attachSession(...)` | WS `/api/sessions/{name}/executions/{id}/attach` | PTY streaming terminal (spawn first, see [PTY.md](PTY.md)) |
 | `ExecAdapter.exec(cmd, args, env)` | `POST /api/sessions/{name}/runs` | Short task; or ephemeral `POST /api/runs` |

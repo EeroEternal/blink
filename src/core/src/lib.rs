@@ -3,6 +3,7 @@
 mod boxlite_options;
 mod context;
 mod exec;
+mod network;
 mod pty;
 mod runner;
 mod session;
@@ -19,7 +20,9 @@ pub struct AgentResult {
 }
 
 pub use boxlite::{ExecResult, Execution};
+pub use boxlite::runtime::options::NetworkConfig;
 pub use context::{BlinkContext, SessionInfo, SessionVolume};
+pub use network::{default_network_config, resolve_network_spec};
 pub use runner::{run_agent_script, run_agent_script_default};
 pub use session::{
     checkpoint_session, export_session, import_session, list_checkpoints, list_sessions,

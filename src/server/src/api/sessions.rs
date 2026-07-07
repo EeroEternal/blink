@@ -55,6 +55,9 @@ struct OpenSessionRequest {
     warm: bool,
     #[serde(default)]
     volumes: Vec<blink_sdk::SessionVolume>,
+    /// Outbound network for the sandbox. Defaults to enabled (full egress).
+    #[serde(default)]
+    network: Option<blink_sdk::NetworkConfig>,
 }
 
 fn default_image() -> String {
@@ -70,9 +73,16 @@ async fn open_session(
     }
     let (box_id, created) = state
         .ctx
-        .open_session(&body.name, &body.image, body.warm, body.volumes)
+        .open_session(&body.name, &body.image, body.warm, body.volumes, body.network)
         .await
-        .map_err(|e| ApiError::internal(e.to_string()))?;
+        .map_err(|e| {
+            let msg = e.to_string();
+            if msg.contains("invalid network") || msg.contains("incompatible") {
+                ApiError::bad_request(msg)
+            } else {
+                ApiError::internal(msg)
+            }
+        })?;
     Ok(Json(serde_json::json!({
         "event": "session_opened",
         "name": body.name,
