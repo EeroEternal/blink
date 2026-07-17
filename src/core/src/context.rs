@@ -10,7 +10,7 @@ use boxlite::{
         SnapshotOptions, VolumeSpec,
     },
 };
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::boxlite_options::load_boxlite_options;
 use crate::exec::exec_agent_script;
@@ -215,15 +215,29 @@ impl BlinkContext {
 }
 
 async fn ensure_memory_dir(litebox: &LiteBox) -> Result<()> {
-    let execution = litebox
-        .exec(BoxCommand::new("sh").arg("-c").arg(format!(
-            "mkdir -p {AGENT_MEMORY_DIR}"
-        )))
-        .await
-        .context("mkdir memory dir")?;
-    let status = execution.wait().await.context("mkdir wait")?;
-    if status.exit_code != 0 {
-        bail!("mkdir {AGENT_MEMORY_DIR} failed");
+    let cmd = format!("mkdir -p {AGENT_MEMORY_DIR}");
+    for attempt in 0..3 {
+        let execution = match litebox
+            .exec(BoxCommand::new("sh").arg("-c").arg(&cmd))
+            .await
+        {
+            Ok(e) => e,
+            Err(e) => {
+                if attempt < 2 {
+                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                    continue;
+                }
+                return Err(e).context("mkdir memory dir");
+            }
+        };
+        let status = execution.wait().await.context("mkdir wait")?;
+        if status.exit_code == 0 {
+            return Ok(());
+        }
+        if attempt < 2 {
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        }
     }
+    warn!(exit_code = "unknown", "mkdir {AGENT_MEMORY_DIR} failed after 3 attempts, agent may need to create it");
     Ok(())
 }
