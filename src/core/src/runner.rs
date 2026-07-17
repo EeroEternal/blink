@@ -33,7 +33,9 @@ pub async fn run_agent_script(script_path: &Path, image: &str) -> anyhow::Result
     };
 
     let litebox = runtime.create(options, None).await.context("create box")?;
-    exec_agent_script(&litebox, &script_path).await
+    let result = exec_agent_script(&litebox, &script_path).await;
+    let _ = litebox.stop().await;
+    result
 }
 
 /// Execute a guest agent binary in an ephemeral sandbox (default rootfs image).
