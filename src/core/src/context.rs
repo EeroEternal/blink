@@ -37,6 +37,43 @@ impl From<SessionVolume> for VolumeSpec {
     }
 }
 
+/// VM resource limits passed through to BoxLite `BoxOptions`.
+///
+/// Unset fields use BoxLite defaults (1 CPU, 2048 MiB RAM, 10 GB disk).
+#[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize)]
+pub struct SandboxResources {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cpus: Option<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_mib: Option<u32>,
+    /// Sparse container rootfs virtual size in GB (at least the base image size).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disk_size_gb: Option<u64>,
+}
+
+impl SandboxResources {
+    pub fn validate(&self) -> Result<()> {
+        if let Some(0) = self.cpus {
+            bail!("cpus must be >= 1");
+        }
+        if let Some(0) = self.memory_mib {
+            bail!("memory_mib must be >= 1");
+        }
+        if let Some(0) = self.disk_size_gb {
+            bail!("disk_size_gb must be >= 1");
+        }
+        Ok(())
+    }
+}
+
+/// Options for creating or reusing a named session.
+#[derive(Clone, Debug, Default)]
+pub struct OpenSessionOptions {
+    pub volumes: Vec<SessionVolume>,
+    pub network: Option<boxlite::runtime::options::NetworkConfig>,
+    pub resources: SandboxResources,
+}
+
 #[derive(Clone)]
 pub struct BlinkContext {
     runtime: BoxliteRuntime,
@@ -71,6 +108,7 @@ impl BlinkContext {
         image: &str,
         volumes: &[VolumeSpec],
         network: NetworkSpec,
+        resources: &SandboxResources,
     ) -> BoxOptions {
         let working_dir = volumes
             .first()
@@ -82,6 +120,9 @@ impl BlinkContext {
             detach: true,
             volumes: volumes.to_vec(),
             working_dir,
+            cpus: resources.cpus,
+            memory_mib: resources.memory_mib,
+            disk_size_gb: resources.disk_size_gb,
             ..Default::default()
         }
     }
@@ -112,16 +153,26 @@ impl BlinkContext {
         name: &str,
         image: &str,
         warm: bool,
-        volumes: Vec<SessionVolume>,
-        network: Option<boxlite::runtime::options::NetworkConfig>,
+        options: OpenSessionOptions,
     ) -> Result<(String, bool)> {
-        info!(name, image, warm, volume_count = volumes.len(), "opening session");
-        let network_spec = resolve_network_spec(network)?;
-        let volume_specs: Vec<VolumeSpec> = volumes.into_iter().map(VolumeSpec::from).collect();
+        options.resources.validate()?;
+        info!(
+            name,
+            image,
+            warm,
+            volume_count = options.volumes.len(),
+            cpus = ?options.resources.cpus,
+            memory_mib = ?options.resources.memory_mib,
+            disk_size_gb = ?options.resources.disk_size_gb,
+            "opening session"
+        );
+        let network_spec = resolve_network_spec(options.network)?;
+        let volume_specs: Vec<VolumeSpec> =
+            options.volumes.into_iter().map(VolumeSpec::from).collect();
         let (litebox, created) = self
             .runtime
             .get_or_create(
-                Self::session_options(image, &volume_specs, network_spec),
+                Self::session_options(image, &volume_specs, network_spec, &options.resources),
                 Some(name.to_string()),
             )
             .await
@@ -134,10 +185,12 @@ impl BlinkContext {
         &self,
         script_path: &Path,
         image: Option<&str>,
+        resources: SandboxResources,
     ) -> Result<AgentResult> {
         run_agent_script(
             script_path,
             image.unwrap_or(blink_shared::DEFAULT_ROOTFS_IMAGE),
+            resources,
         )
         .await
     }

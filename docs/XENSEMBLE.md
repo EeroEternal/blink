@@ -76,7 +76,7 @@ XEnsemble `server/src/runtime/BoxLite*.js` should map to Blink REST API as follo
 
 | XEnsemble Interface | Blink API | Description |
 |---------------------|-----------|-------------|
-| `RuntimeProvider.ensureReady(project, opts)` | `POST /api/sessions` | `name` = runtime id; optional `warm`; optional `volumes[]` virtiofs mounts; optional `network` (`mode`: `enabled`/`disabled`, `allow_net`: host allowlist — empty = full egress). Default: **enabled**. Env: `BLINK_NETWORK`, `BLINK_ALLOW_NET`. |
+| `RuntimeProvider.ensureReady(project, opts)` | `POST /api/sessions` | `name` = runtime id; optional `warm`; optional `volumes[]` virtiofs mounts; optional `network` (`mode`: `enabled`/`disabled`, `allow_net`: host allowlist — empty = full egress); optional `resources` (`cpus`, `memory_mib`, `disk_size_gb` — unset uses BoxLite defaults: 1 CPU / 2048 MiB / 10 GB). Default network: **enabled**. Env: `BLINK_NETWORK`, `BLINK_ALLOW_NET`. Quotas for resources belong to XEnsemble; Blink only applies the requested limits at create time. |
 | `RuntimeProvider.destroy(runtimeRef)` | `DELETE /api/sessions/{name}` | Destroy sandbox |
 | `RuntimeProvider.attachSession(...)` | WS `/api/sessions/{name}/executions/{id}/attach` | PTY streaming terminal (spawn first, see [PTY.md](PTY.md)) |
 | `ExecAdapter.exec(cmd, args, env)` | `POST /api/sessions/{name}/runs` | Short task; or ephemeral `POST /api/runs` |

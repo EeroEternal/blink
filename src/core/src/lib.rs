@@ -21,13 +21,15 @@ pub struct AgentResult {
 
 pub use boxlite::{ExecResult, Execution};
 pub use boxlite::runtime::options::NetworkConfig;
-pub use context::{BlinkContext, SessionInfo, SessionVolume};
+pub use context::{
+    BlinkContext, OpenSessionOptions, SandboxResources, SessionInfo, SessionVolume,
+};
 pub use network::{default_network_config, resolve_network_spec};
 pub use runner::{run_agent_script, run_agent_script_default};
 pub use session::{
     checkpoint_session, export_session, import_session, list_checkpoints, list_sessions,
-    open_session, open_warm_session, remove_session, restore_session, run_in_session,
-    spawn_in_session, stop_session,
+    open_session, open_session_with, open_warm_session, remove_session, restore_session,
+    run_in_session, spawn_in_session, stop_session,
 };
 pub use pty::{ExecPump, SpawnSpec, handle_control_message, spawn_exec, start_exec_pump};
 pub use tier::SandboxTier;
