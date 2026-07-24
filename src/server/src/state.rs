@@ -1,7 +1,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use blink_sdk::BlinkContext;
+use blink_sdk::{BlinkContext, OpenSessionOptions, SandboxResources};
 use blink_shared::DEFAULT_ROOTFS_IMAGE;
 
 use crate::exec_registry::ExecRegistry;
@@ -30,6 +30,7 @@ impl AppState {
         session_name: Option<String>,
         image: Option<String>,
         warm: bool,
+        resources: SandboxResources,
     ) -> JobRecord {
         let job = self
             .jobs
@@ -44,12 +45,17 @@ impl AppState {
             let result = async {
                 match tier {
                     blink_sdk::SandboxTier::Ephemeral => {
-                        ctx.run_agent_ephemeral(path, image.as_deref()).await
+                        ctx.run_agent_ephemeral(path, image.as_deref(), resources)
+                            .await
                     }
                     blink_sdk::SandboxTier::Session => {
                         let name = session_name.as_deref().unwrap();
                         let image = image.as_deref().unwrap_or(DEFAULT_ROOTFS_IMAGE);
-                        ctx.open_session(name, image, warm, Vec::new(), None).await?;
+                        let options = OpenSessionOptions {
+                            resources,
+                            ..Default::default()
+                        };
+                        ctx.open_session(name, image, warm, options).await?;
                         ctx.run_in_session(name, path).await
                     }
                 }

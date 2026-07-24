@@ -3,8 +3,9 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use blink_sdk::{
     checkpoint_session, export_session, import_session, list_checkpoints, list_sessions,
-    open_session, open_warm_session, remove_session, restore_session, run_agent_script,
-    run_in_session, serve_vhub, spawn_in_session, stop_session, SpawnSpec, start_exec_pump,
+    open_session_with, remove_session, restore_session, run_agent_script, run_in_session,
+    serve_vhub, spawn_in_session, stop_session, OpenSessionOptions, SandboxResources, SpawnSpec,
+    start_exec_pump,
 };
 use clap::{Parser, Subcommand};
 use tracing_subscriber::EnvFilter;
@@ -23,6 +24,15 @@ enum Commands {
         script: PathBuf,
         #[arg(long, default_value = "alpine:3.20")]
         image: String,
+        /// Number of vCPUs (default: BoxLite 1).
+        #[arg(long)]
+        cpus: Option<u8>,
+        /// Memory in MiB (default: BoxLite 2048).
+        #[arg(long)]
+        memory_mib: Option<u32>,
+        /// Container rootfs virtual size in GB (default: BoxLite 10).
+        #[arg(long)]
+        disk_size_gb: Option<u64>,
     },
     /// Start the V-Hub listener on a Unix socket (for guest vsock bridge wiring).
     Serve {
@@ -47,6 +57,15 @@ enum SessionCommands {
         /// Keep VM alive after host disconnects (warm session).
         #[arg(long, default_value_t = false)]
         warm: bool,
+        /// Number of vCPUs (default: BoxLite 1). Only applied when creating a new session.
+        #[arg(long)]
+        cpus: Option<u8>,
+        /// Memory in MiB (default: BoxLite 2048). Only applied when creating a new session.
+        #[arg(long)]
+        memory_mib: Option<u32>,
+        /// Container rootfs virtual size in GB (default: BoxLite 10). Only applied when creating.
+        #[arg(long)]
+        disk_size_gb: Option<u64>,
     },
     /// Run an agent script inside an existing session.
     Run {
@@ -122,14 +141,31 @@ async fn main() -> Result<()> {
         .init();
 
     match Cli::parse().command {
-        Commands::Run { script, image } => run_ephemeral(&script, &image).await,
+        Commands::Run {
+            script,
+            image,
+            cpus,
+            memory_mib,
+            disk_size_gb,
+        } => {
+            run_ephemeral(
+                &script,
+                &image,
+                SandboxResources {
+                    cpus,
+                    memory_mib,
+                    disk_size_gb,
+                },
+            )
+            .await
+        }
         Commands::Serve { socket } => serve_command(&socket).await,
         Commands::Session { command } => session_command(command).await,
     }
 }
 
-async fn run_ephemeral(script: &PathBuf, image: &str) -> Result<()> {
-    let result = run_agent_script(script, image)
+async fn run_ephemeral(script: &PathBuf, image: &str, resources: SandboxResources) -> Result<()> {
+    let result = run_agent_script(script, image, resources)
         .await
         .with_context(|| format!("blink run failed for {}", script.display()))?;
     print_execution_result(&result)
@@ -137,18 +173,31 @@ async fn run_ephemeral(script: &PathBuf, image: &str) -> Result<()> {
 
 async fn session_command(command: SessionCommands) -> Result<()> {
     match command {
-        SessionCommands::Open { name, image, warm } => {
-            let (box_id, created) = if warm {
-                open_warm_session(&name, &image).await?
-            } else {
-                open_session(&name, &image).await?
+        SessionCommands::Open {
+            name,
+            image,
+            warm,
+            cpus,
+            memory_mib,
+            disk_size_gb,
+        } => {
+            let resources = SandboxResources {
+                cpus,
+                memory_mib,
+                disk_size_gb,
             };
+            let options = OpenSessionOptions {
+                resources: resources.clone(),
+                ..Default::default()
+            };
+            let (box_id, created) = open_session_with(&name, &image, warm, options).await?;
             let payload = serde_json::json!({
                 "event": "session_opened",
                 "name": name,
                 "box_id": box_id,
                 "created": created,
                 "warm": warm,
+                "resources": resources,
                 "memory_dir": blink_shared::AGENT_MEMORY_DIR,
             });
             println!("{}", serde_json::to_string(&payload)?);

@@ -26,6 +26,9 @@ struct SubmitRunRequest {
     image: Option<String>,
     #[serde(default)]
     warm: bool,
+    /// VM resource limits for new sandboxes (ignored when reusing an existing session).
+    #[serde(default)]
+    resources: blink_sdk::SandboxResources,
 }
 
 #[derive(Clone, Copy, Default, Deserialize)]
@@ -76,6 +79,7 @@ async fn submit_run(
         body.session_name,
         body.image,
         body.warm,
+        body.resources,
     );
 
     Ok(Json(SubmitRunResponse {

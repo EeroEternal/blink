@@ -3,18 +3,25 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 use boxlite::SnapshotInfo;
 
-pub use crate::context::{BlinkContext, SessionInfo};
+pub use crate::context::{BlinkContext, OpenSessionOptions, SessionInfo};
 
 /// Open (create or reuse) a named persistent agent session.
 pub async fn open_session(name: &str, image: &str) -> Result<(String, bool)> {
-    BlinkContext::new()?
-        .open_session(name, image, false, Vec::new(), None)
-        .await
+    open_session_with(name, image, false, OpenSessionOptions::default()).await
 }
 
 pub async fn open_warm_session(name: &str, image: &str) -> Result<(String, bool)> {
+    open_session_with(name, image, true, OpenSessionOptions::default()).await
+}
+
+pub async fn open_session_with(
+    name: &str,
+    image: &str,
+    warm: bool,
+    options: OpenSessionOptions,
+) -> Result<(String, bool)> {
     BlinkContext::new()?
-        .open_session(name, image, true, Vec::new(), None)
+        .open_session(name, image, warm, options)
         .await
 }
 

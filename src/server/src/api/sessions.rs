@@ -58,6 +58,9 @@ struct OpenSessionRequest {
     /// Outbound network for the sandbox. Defaults to enabled (full egress).
     #[serde(default)]
     network: Option<blink_sdk::NetworkConfig>,
+    /// VM resource limits (cpus / memory_mib / disk_size_gb). Unset = BoxLite defaults.
+    #[serde(default)]
+    resources: blink_sdk::SandboxResources,
 }
 
 fn default_image() -> String {
@@ -71,13 +74,23 @@ async fn open_session(
     if !valid_session_name(&body.name) {
         return Err(ApiError::bad_request("invalid session name"));
     }
+    let options = blink_sdk::OpenSessionOptions {
+        volumes: body.volumes,
+        network: body.network,
+        resources: body.resources.clone(),
+    };
     let (box_id, created) = state
         .ctx
-        .open_session(&body.name, &body.image, body.warm, body.volumes, body.network)
+        .open_session(&body.name, &body.image, body.warm, options)
         .await
         .map_err(|e| {
             let msg = e.to_string();
-            if msg.contains("invalid network") || msg.contains("incompatible") {
+            if msg.contains("invalid network")
+                || msg.contains("incompatible")
+                || msg.contains("cpus must")
+                || msg.contains("memory_mib must")
+                || msg.contains("disk_size_gb must")
+            {
                 ApiError::bad_request(msg)
             } else {
                 ApiError::internal(msg)
@@ -89,6 +102,7 @@ async fn open_session(
         "box_id": box_id,
         "created": created,
         "warm": body.warm,
+        "resources": body.resources,
     })))
 }
 
